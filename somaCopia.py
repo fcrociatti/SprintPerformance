@@ -1,3 +1,4 @@
+import streamlit as st
 import requests
 from requests.auth import HTTPBasicAuth
 from datetime import datetime, timezone
@@ -6,9 +7,10 @@ from supabase import create_client, Client
 
 # --- Configurações ---
 SUPABASE_URL = st.secrets["SUPABASE_URL"]
-SUPABASE_KEY = st.secrets["SUPABASE_URL"]
+SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+# ... (resto do seu código)
 JIRA_URL = st.secrets["JIRA_URL"]
 JIRA_USER = st.secrets["JIRA_USER"]
 JIRA_TOKEN = st.secrets["JIRA_TOKEN"]
