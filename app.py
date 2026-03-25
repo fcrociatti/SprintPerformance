@@ -45,7 +45,7 @@ if not df_sprints.empty:
     df_sprints['nome_exibicao'] = df_sprints['descricao'] + " - " + df_sprints['nome_sprint']
 
 
-aba_dashboard, aba_historico, aba_sincronizacao = st.tabs(["📈 Visão da Sprint", "📊 Histórico & Desempenho", "⚙️ Gerenciar Sprints"])
+aba_dashboard,  aba_sincronizacao, aba_historico = st.tabs(["📈 Visão da Sprint",  "⚙️ Gerenciar Sprints", "📊 Histórico & Desempenho"])
 
 
 
@@ -394,6 +394,167 @@ with aba_dashboard:
                 )
         else:
             st.info("Nenhuma entrega contabilizada.")
+
+
+
+        # ==========================================
+        # BURNDOWN DA SPRINT (TICKETS)
+        # ==========================================
+        st.divider()
+        st.subheader("📉 Burndown da Sprint")
+
+        if not df_backlog_filtrado.empty or not df_filtrado.empty:
+            # 1. Total de tickets da Sprint (Pendentes + Entregues)
+            total_tickets = len(df_backlog_filtrado) + len(df_filtrado)
+
+            # 2. Resgatar as datas da Sprint atual
+            data_ini_str = df_sprints[df_sprints['nome_exibicao'] == sprint_selecionada]['data_inicio'].iloc[0]
+            data_fim_str = df_sprints[df_sprints['nome_exibicao'] == sprint_selecionada]['data_fim'].iloc[0]
+            data_ini = datetime.strptime(data_ini_str, "%Y-%m-%d").date()
+            data_fim = datetime.strptime(data_fim_str, "%Y-%m-%d").date()
+            
+            qtd_dias = (data_fim - data_ini).days + 1
+            dias_sprint = [data_ini + timedelta(days=x) for x in range(qtd_dias)]
+
+            # 3. Contar quantas entregas aconteceram por dia
+            df_entregas_bd = df_filtrado.copy()
+            entregas_por_dia = {}
+            if not df_entregas_bd.empty:
+                # Converte ISO para data simples e conta
+                df_entregas_bd['data_dt'] = pd.to_datetime(df_entregas_bd['data_conclusao']).dt.date
+                entregas_por_dia = df_entregas_bd.groupby('data_dt').size().to_dict()
+
+            # 4. Construir os dados para o Gráfico
+            bd_dados = []
+            real_restante = total_tickets
+            passo_ideal = total_tickets / (qtd_dias - 1) if qtd_dias > 1 else 0
+            hoje = datetime.now().date()
+
+            for i, dia in enumerate(dias_sprint):
+                ideal_restante = total_tickets - (passo_ideal * i)
+
+                # Subtrai o que foi entregue neste dia específico
+                entregues_hoje = entregas_por_dia.get(dia, 0)
+                real_restante = real_restante - entregues_hoje
+
+                # Se o dia ainda não chegou (futuro), não desenhamos a linha azul
+                linha_real = real_restante if dia <= hoje else None
+
+                bd_dados.append({
+                    "Data": dia.strftime("%d/%m"),
+                    "Diretriz": round(ideal_restante, 1),
+                    "Trabalho Restante": linha_real
+                })
+
+            df_burndown = pd.DataFrame(bd_dados)
+
+            # 5. Desenhar o gráfico com Altair
+            base = alt.Chart(df_burndown).encode(
+                x=alt.X('Data:O', sort=df_burndown['Data'].tolist(), title="Dias da Sprint")
+            )
+
+            linha_ideal = base.mark_line(color='gray', strokeDash=[5, 5]).encode(
+                y=alt.Y('Diretriz:Q', title="Tickets Restantes"),
+                tooltip=['Data', 'Diretriz']
+            )
+
+            linha_real = base.mark_line(color='#4CA6FF', point=True, strokeWidth=3).encode(
+                y=alt.Y('Trabalho Restante:Q'),
+                tooltip=['Data', 'Trabalho Restante']
+            )
+
+            grafico_burndown = (linha_ideal + linha_real).properties(height=350)
+            st.altair_chart(grafico_burndown, use_container_width=True, theme="streamlit")
+            
+        else:
+            st.info("Sem dados suficientes para gerar o Burndown.")
+
+
+       # ==========================================
+        # SECÇÃO 3: ITENS POR CLIENTE (NOVA E ÚLTIMA SECÇÃO)
+        # ==========================================
+        st.divider()
+        st.subheader("🏢 Itens por Cliente (Planning)")
+
+        if not df_backlog_filtrado.empty:
+            
+            # PREVENÇÃO DE ERRO: Garante que a coluna existe mesmo se você ainda não clicou em "Atualizar" na aba de Gestão
+            if 'data_criacao' not in df_backlog_filtrado.columns:
+                df_backlog_filtrado['data_criacao'] = "2000-01-01"
+
+            # 1. Descobrir a data de início da Sprint atual
+            data_inicio_sprint = df_sprints[df_sprints['nome_exibicao'] == sprint_selecionada]['data_inicio'].iloc[0]
+            
+            # 2. Filtrar APENAS os itens criados depois ou no mesmo dia do início da Sprint
+            df_clientes_sprint = df_backlog_filtrado[df_backlog_filtrado['data_criacao'] >= data_inicio_sprint].copy()
+
+            col_cli1, col_cli2 = st.columns([2, 3])
+
+            with col_cli1:
+                st.write("**Resumo de Carga por Cliente**")
+                
+                if not df_clientes_sprint.empty:
+                    # 3. Conta os itens com o DataFrame já filtrado
+                    df_clientes = df_clientes_sprint.groupby('cliente')['issue_key'].count().reset_index()
+                    df_clientes.columns = ['Cliente', 'Contagem']
+                    df_clientes = df_clientes.sort_values(by='Contagem', ascending=False)
+                    
+                    # Calcula a porcentagem
+                    total_cli = df_clientes['Contagem'].sum()
+                    if total_cli > 0:
+                        df_clientes['Porcentagem'] = (df_clientes['Contagem'] / total_cli) * 100
+                    else:
+                        df_clientes['Porcentagem'] = 0
+                    
+                    st.dataframe(
+                        df_clientes,
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config={
+                            "Cliente": st.column_config.TextColumn("Cliente", width="medium"),
+                            "Contagem": st.column_config.NumberColumn("Qtd", width="small"),
+                            "Porcentagem": st.column_config.ProgressColumn(
+                                "%",
+                                format="%d%%",
+                                min_value=0,
+                                max_value=100,
+                            ),
+                        }
+                    )
+                else:
+                    st.info("Nenhum item novo criado para esta sprint até o momento.")
+                    df_clientes = pd.DataFrame(columns=['Cliente']) # Evita erro na coluna 2
+
+            with col_cli2:
+                st.write("**Detalhamento de Tickets**")
+                
+                if not df_clientes_sprint.empty:
+                    lista_clientes = ["Todos"] + df_clientes['Cliente'].tolist()
+                    cliente_selecionado = st.selectbox("Selecione o Cliente para detalhar:", lista_clientes)
+
+                    if cliente_selecionado != "Todos":
+                        # Usa a base já filtrada por data (df_clientes_sprint)
+                        df_detalhe_cliente = df_clientes_sprint[df_clientes_sprint['cliente'] == cliente_selecionado].copy()
+                    else:
+                        df_detalhe_cliente = df_clientes_sprint.copy()
+
+                    df_detalhe_cliente['link'] = "https://ddsinfo.atlassian.net/browse/" + df_detalhe_cliente['issue_key']
+                    
+                    st.dataframe(
+                        df_detalhe_cliente[['issue_key', 'resumo', 'tipo_item', 'responsavel', 'link']], 
+                        use_container_width=True, hide_index=True,
+                        column_config={
+                            "issue_key": "Chave",
+                            "resumo": st.column_config.TextColumn("Resumo", width="large"),
+                            "tipo_item": "Tipo", 
+                            "responsavel": "Responsável", 
+                            "link": st.column_config.LinkColumn("Jira")
+                        }
+                    )
+                else:
+                    st.write("Sem tickets para detalhar.")
+        else:
+            st.info("Nenhum item encontrado no backlog para exibir clientes.")
 
     else:
         st.warning("Vá à aba '⚙️ Gerenciar Sprints' e adicione a sua primeira Sprint!")

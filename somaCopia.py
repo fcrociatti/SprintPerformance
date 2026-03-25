@@ -52,8 +52,7 @@ def obter_dados_projeto(projeto):
     while True:
         jql = f'project = "{projeto}" AND TYPE != Bug ORDER BY created DESC'
         
-        # --- Modificado para incluir summary e customfield_10133 ---
-        params = {"jql": jql, "fields": f"{CUSTOM_POINT_FIELD},{CUSTOM_DATE_FIELD},assignee,status,issuetype,summary,{CUSTOM_CLIENTE_FIELD}", "expand": "changelog", "maxResults": 50}
+        params = {"jql": jql, "fields": f"{CUSTOM_POINT_FIELD},{CUSTOM_DATE_FIELD},assignee,status,issuetype,summary,{CUSTOM_CLIENTE_FIELD},created", "expand": "changelog", "maxResults": 50}
         
         if next_token: params["nextPageToken"] = next_token
         resp = requests.get(f"{JIRA_URL}/rest/api/3/search/jql", headers=headers, auth=auth, params=params)
@@ -138,7 +137,7 @@ def extrair_e_salvar_backlog(projeto, sprint_id):
         # --- Modificado para incluir summary e customfield_10133 ---
         params = {
             "jql": jql_backlog,
-            "fields": f"assignee,issuetype,summary,{CUSTOM_CLIENTE_FIELD}",
+            "fields": f"assignee,issuetype,summary,{CUSTOM_CLIENTE_FIELD},created",
             "maxResults": 50
         }
         
@@ -170,6 +169,10 @@ def extrair_e_salvar_backlog(projeto, sprint_id):
             resumo = issue["fields"].get("summary", "Sem resumo")
             cliente_nome = extrair_cliente(issue["fields"])
 
+            data_criacao_raw = issue["fields"].get("created", "")
+            data_criacao = data_criacao_raw[:10] if data_criacao_raw else "2000-01-01"
+
+
             dados_backlog.append({
                 "sprint_id": sprint_id,
                 "issue_key": key,
@@ -178,7 +181,8 @@ def extrair_e_salvar_backlog(projeto, sprint_id):
                 "papel": papel,
                 "tipo_item": tipo_item_nome,
                 "resumo": resumo,
-                "cliente": cliente_nome # <--- ENVIANDO PARA O BANCO
+                "cliente": cliente_nome, 
+                "data_criacao" : data_criacao
             })
 
         if data_json.get("isLast") or not data_json.get("issues", []): break

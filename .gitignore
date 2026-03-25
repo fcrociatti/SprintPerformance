@@ -1,1 +1,2 @@
-.streamlit/secrets.taml__pycache__/
+.streamlit/
+__pycache__/
