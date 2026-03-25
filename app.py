@@ -9,54 +9,37 @@ import streamlit as st
 from streamlit_google_auth import Authenticate
 import json
 
-# Monta o dicionário sem a barra no redirect_uri
-google_secrets = {
-    "web": {
-        "client_id": st.secrets["auth"]["client_id"],
-        "client_secret": st.secrets["auth"]["client_secret"],
-        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-        "token_uri": "https://oauth2.googleapis.com/token",
-        "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-        "redirect_uris": [st.secrets["auth"]["redirect_uri"]], # Pega do secret sem barra
-    }
-}
 
-# Cria o arquivo temporário pro servidor ler
-with open('google_credentials.json', 'w') as f:
-    json.dump(google_secrets, f)
 
-# Inicializa o autenticador
 authenticator = Authenticate(
-    secret_credentials_path='google_credentials.json', 
+    secret_credentials_path=None, # Forçamos a não usar arquivo
     cookie_name='dds_auth_cookie',
-    cookie_key='dds_secret_key',
+    cookie_key=st.secrets["auth"]["client_secret"], # Usamos a secret como chave do cookie
     cookie_expiry_days=1,
-    redirect_uri=st.secrets["auth"]["redirect_uri"],
 )
 
-# Faz o login
 user_info = authenticator.login()
 
 if user_info:
-    # Valida o e-mail na whitelist (Segurança do Sergio)
-    email_logado = user_info.get('email')
-    if email_logado in st.secrets["whitelist"]["emails"]:
-        st.sidebar.success(f"Logado: {email_logado}")
-        
+    email = user_info.get('email')
+    
+    if email in st.secrets["whitelist"]["emails"]:
+        st.sidebar.success(f"Logado: {email}")
         if st.sidebar.button("Sair"):
             authenticator.logout()
             st.rerun()
             
-        # --- MEU CÓDIGO DO PAINEL ABAIXO ---
-        st.title("📊 Painel de Performance DDS")
+        # --- SEU CÓDIGO DO DASHBOARD COMEÇA AQUI ---
+        st.title("📊 Painel de Performance - DDS")
         
     else:
-        st.error("E-mail não autorizado. Falar com o admin.")
+        st.error(f"Acesso Negado: {email} não autorizado.")
         st.stop()
 else:
-    # Trava o app na tela de login
+    # Se não tem user_info, para tudo e mostra só o botão
+    st.info("Autenticação Google obrigatória para acessar dados da DDS.")
     st.stop()
-    
+
 st.write("### O Dashboard está liberado!") 
 
 st.title("📊 Dashboard de Performance - DDS Informática")
