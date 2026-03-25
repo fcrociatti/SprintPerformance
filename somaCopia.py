@@ -5,19 +5,17 @@ from datetime import datetime, timezone
 import pandas as pd
 from supabase import create_client, Client
 
-# --- Configurações ---
 SUPABASE_URL = st.secrets["SUPABASE_URL"]
 SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# ... (resto do seu código)
 JIRA_URL = st.secrets["JIRA_URL"]
 JIRA_USER = st.secrets["JIRA_USER"]
 JIRA_TOKEN = st.secrets["JIRA_TOKEN"]
 
 CUSTOM_POINT_FIELD = "customfield_10069" 
 CUSTOM_DATE_FIELD = "customfield_10231" 
-CUSTOM_CLIENTE_FIELD = "customfield_10133" # <--- NOVO: Campo de Cliente
+CUSTOM_CLIENTE_FIELD = "customfield_10133" 
 
 TIPOS_SUSTENTACAO = ["erro", "atendimento","Retorno Negativo (RN)"]
 status_alvo = [
@@ -30,7 +28,6 @@ status_alvo = [
 headers = {"Accept": "application/json", "Content-Type": "application/json"}
 auth = HTTPBasicAuth(JIRA_USER, JIRA_TOKEN)
 
-# Variável global que será preenchida pelo Streamlit
 periodos = []
 
 def extrair_cliente(issue_fields):
@@ -99,7 +96,6 @@ def obter_dados_projeto(projeto):
             pontos_sustentacao = pontos if tipo_item_nome in TIPOS_SUSTENTACAO else 0
             pontos_desenvolvimento = pontos if tipo_item_nome not in TIPOS_SUSTENTACAO else 0
             
-            # --- NOVOS CAMPOS ---
             resumo = issue["fields"].get("summary", "Sem resumo")
             cliente_nome = extrair_cliente(issue["fields"])
                 
@@ -115,7 +111,7 @@ def obter_dados_projeto(projeto):
 
     return dados
 
-# Hardcode inicial (conforme alinhado)
+# Hardcode inicial 
 ANALISTAS = ["Fernando", "Anderson", "Gustavo", "Nathan"]
 
 def extrair_e_salvar_backlog(projeto, sprint_id):
@@ -125,7 +121,7 @@ def extrair_e_salvar_backlog(projeto, sprint_id):
     dados_backlog = []
     next_token = ""
     
-    # O JQL exato que você forneceu
+    # JQL BASE
     jql_backlog = (
         f'type != bug AND project = "{projeto}" '
         f'AND Sprint in (openSprints(),EMPTY) '
@@ -134,7 +130,6 @@ def extrair_e_salvar_backlog(projeto, sprint_id):
     )
 
     while True:
-        # --- Modificado para incluir summary e customfield_10133 ---
         params = {
             "jql": jql_backlog,
             "fields": f"assignee,issuetype,summary,{CUSTOM_CLIENTE_FIELD},created",
@@ -154,18 +149,15 @@ def extrair_e_salvar_backlog(projeto, sprint_id):
         for issue in data_json.get("issues", []):
             key = issue["key"]
             
-            # Obtém responsável
+            
             assignee = issue["fields"].get("assignee")
             dev_nome = assignee["displayName"] if assignee else "Sem responsável"
             
-            # Obtém tipo do item
             typeIssue = issue["fields"].get("issuetype") 
             tipo_item_nome = typeIssue["name"].lower() if typeIssue else "sem tipo"
 
-            # Define o papel baseado no Hardcode que você pediu
             papel = "Analista" if any(analista in dev_nome for analista in ANALISTAS) else "Desenvolvedor"
             
-            # --- NOVOS CAMPOS ---
             resumo = issue["fields"].get("summary", "Sem resumo")
             cliente_nome = extrair_cliente(issue["fields"])
 
@@ -189,10 +181,8 @@ def extrair_e_salvar_backlog(projeto, sprint_id):
         next_token = data_json.get("nextPageToken")
         if not next_token: break
 
-    # Salva no banco de dados
     if dados_backlog:
         try:
-            # upsert garante que se rodar hoje e amanhã, ele atualiza a mesma issue na mesma sprint
             supabase.table("sprint_backlog").upsert(dados_backlog, on_conflict="sprint_id, issue_key").execute()
             print(f"✅ Backlog da Sprint ({len(dados_backlog)} itens) salvo com sucesso!")
         except Exception as e:
@@ -207,7 +197,7 @@ def sincronizar_com_supabase(dados_extracao, projeto_nome, sprint_id):
             "tipo_item": item["Tipo"], "categoria": "Sustentação" if item["Pontos_Sustentacao"] > 0 else "Desenvolvimento",
             "pontos": item["Pontos_Sustentacao"] + item["Pontos_Desenvolvimento"],
             "data_conclusao": item["Data_Transicao"], "sprint_id": sprint_id,
-            "resumo": item["Resumo"], "cliente": item["Cliente"] # <--- ENVIANDO PARA O BANCO
+            "resumo": item["Resumo"], "cliente": item["Cliente"] 
         })
     supabase.table("sprint_details").upsert(payload, on_conflict="issue_key").execute()
 
@@ -228,7 +218,6 @@ def obter_ou_criar_sprint(inicio, fim, descricao):
 
     for sp in sprints_existentes:
         if sp['data_inicio'] == inicio_str and sp['data_fim'] == fim_str:
-            # Opcional: Atualizar a descrição se já existir, mas por enquanto apenas retornamos
             return sp['id'], "Sprint existente encontrada e vinculada."
 
     for sp in sprints_existentes:
@@ -237,7 +226,6 @@ def obter_ou_criar_sprint(inicio, fim, descricao):
         if dt_inicio <= sp_fim and dt_fim >= sp_inicio:
             return None, f"Sobreposição detectada com a {sp['nome_sprint']}."
 
-    # Aqui incluímos a descrição que vem da tela
     nova_sprint = {"nome_sprint": nome_sprint, "data_inicio": inicio_str, "data_fim": fim_str, "descricao": descricao}
     insercao = supabase.table("sprints_master").insert(nova_sprint).execute()
     return insercao.data[0]['id'], "Nova Sprint cadastrada com sucesso!"
@@ -246,7 +234,6 @@ def executar_extracao(data_inicio_input, data_fim_input, descricao_input):
     global periodos
     
     inicio = datetime.combine(data_inicio_input, datetime.min.time()).replace(tzinfo=timezone.utc)
-    # Colocamos o fim para as 23:59:59 do último dia para garantir a cobertura completa
     fim = datetime.combine(data_fim_input, datetime.max.time()).replace(tzinfo=timezone.utc)
     periodos = [(inicio, fim)]
     
@@ -256,14 +243,11 @@ def executar_extracao(data_inicio_input, data_fim_input, descricao_input):
         return False, msg_validacao 
         
     try:
-        # 1. Busca os pontos entregues (Sempre roda para garantir correções de pontuação tardias)
         dados_star_pontos = obter_dados_projeto("STAR")
         sincronizar_com_supabase(dados_star_pontos, "STAR", id_sprint)
         
-        # --- A NOVA TRAVA DE SEGURANÇA AQUI ---
         hoje = datetime.now(timezone.utc)
         
-        # 2. Busca a "Fotografia" do Backlog apenas se a sprint ainda estiver ativa ou no futuro
         if fim >= hoje:
             extrair_e_salvar_backlog("STAR", id_sprint)
             status_backlog = "Pontos e Snapshot do Backlog atualizados."

@@ -1,7 +1,6 @@
 import requests
 from requests.auth import HTTPBasicAuth
 
-# As suas credenciais
 
 JIRA_URL = st.secrets["JIRA_URL"]
 JIRA_USER = st.secrets["JIRA_USER"]

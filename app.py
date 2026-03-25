@@ -4,6 +4,7 @@ import altair as alt
 from supabase import create_client, Client
 from datetime import timedelta, datetime
 from somaCopia import executar_extracao
+import os
 
 
 SUPABASE_URL = st.secrets["SUPABASE_URL"]
@@ -11,7 +12,18 @@ SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 st.set_page_config(layout="wide", page_title="Dashboard de Sprints DDS")
-st.title("📊 Sprint Performance  - DDS ")
+
+col_titulo, col_logo = st.columns([5, 1])
+
+with col_titulo:
+    st.title("📊 Sprint Performance - DDS")
+
+with col_logo:
+    caminho_logo = "assets/logo.png" 
+    
+    if os.path.exists(caminho_logo):
+        st.write("") 
+        st.image(caminho_logo, use_container_width=True)
 
 # ==========================================
 # CARREGAMENTO GLOBAL DOS DADOS
@@ -35,7 +47,6 @@ df_issues = carregar_issues()
 df_sprints = carregar_sprints()
 df_backlog = carregar_backlog()
 
-# Tratamento de segurança e criação do Nome de Exibição
 if not df_sprints.empty:
     if 'descricao' not in df_sprints.columns:
         df_sprints['descricao'] = "Sem Descrição"
@@ -58,18 +69,15 @@ with aba_historico:
     st.write("Selecione um período para analisar a evolução e a consistência das entregas da equipe.")
 
     if not df_sprints.empty and not df_issues.empty:
-        # Prepara a lista de sprints e sugere as últimas 5 por padrão
         lista_sprints_hist = df_sprints['nome_exibicao'].tolist()
         sprints_padrao = lista_sprints_hist[:5] if len(lista_sprints_hist) >= 5 else lista_sprints_hist
         
-        # Filtros Lado a Lado
         col_f1, col_f2 = st.columns(2)
         sprints_selecionadas_hist = col_f1.multiselect("1. Selecione as Sprints:", lista_sprints_hist, default=sprints_padrao)
         
         if sprints_selecionadas_hist:
             ids_sprints_hist = df_sprints[df_sprints['nome_exibicao'].isin(sprints_selecionadas_hist)]['id'].tolist()
             
-            # Mescla as issues com as datas da sprint para ordenar corretamente o gráfico
             df_issues_completo = df_issues.merge(df_sprints[['id', 'descricao', 'data_inicio']], left_on='sprint_id', right_on='id')
             df_hist = df_issues_completo[df_issues_completo['sprint_id'].isin(ids_sprints_hist)]
             
@@ -79,10 +87,8 @@ with aba_historico:
             df_hist = df_hist[df_hist['responsavel'].isin(devs_selecionados_hist)]
             
             if not df_hist.empty:
-                # Resumo do Período
                 total_periodo = df_hist['pontos'].sum()
                 
-                # Calcula a média dividindo o total pela quantidade de sprints selecionadas
                 qtd_sprints = len(ids_sprints_hist)
                 media_por_sprint = (total_periodo / qtd_sprints) if qtd_sprints > 0 else 0
                 
@@ -98,7 +104,6 @@ with aba_historico:
                 
                 st.markdown("---")
                 
-                # Gráficos de Evolução e Ranking
                 col_graf_evo, col_graf_rank = st.columns([3, 2])
                 
                 with col_graf_evo:
@@ -299,7 +304,7 @@ with aba_dashboard:
                     st.markdown("<br>", unsafe_allow_html=True)
                     df_an_comp = pd.DataFrame({'responsavel': ["Anderson", "Fernando", "Gustavo", "Nathan"],'quantidade': [anderson, fernando, gustavo, nathan]})
                     if not df_an_comp.empty:
-                        bar_comp = alt.Chart(df_an_comp).mark_bar(color='#CC6677').encode(
+                        bar_comp = alt.Chart(df_an_comp).mark_bar(color="#37a0d2").encode(
                             x=alt.X('quantidade:Q', title='Qtd de Itens', axis=alt.Axis(grid=False)),
                             y=alt.Y('responsavel:N', sort='-x', title=''),
                             tooltip=['responsavel', 'quantidade']
@@ -404,10 +409,8 @@ with aba_dashboard:
         st.subheader("📉 Burndown da Sprint")
 
         if not df_backlog_filtrado.empty or not df_filtrado.empty:
-            # 1. Total de tickets da Sprint (Pendentes + Entregues)
             total_tickets = len(df_backlog_filtrado) + len(df_filtrado)
 
-            # 2. Resgatar as datas da Sprint atual
             data_ini_str = df_sprints[df_sprints['nome_exibicao'] == sprint_selecionada]['data_inicio'].iloc[0]
             data_fim_str = df_sprints[df_sprints['nome_exibicao'] == sprint_selecionada]['data_fim'].iloc[0]
             data_ini = datetime.strptime(data_ini_str, "%Y-%m-%d").date()
@@ -416,15 +419,12 @@ with aba_dashboard:
             qtd_dias = (data_fim - data_ini).days + 1
             dias_sprint = [data_ini + timedelta(days=x) for x in range(qtd_dias)]
 
-            # 3. Contar quantas entregas aconteceram por dia
             df_entregas_bd = df_filtrado.copy()
             entregas_por_dia = {}
             if not df_entregas_bd.empty:
-                # Converte ISO para data simples e conta
                 df_entregas_bd['data_dt'] = pd.to_datetime(df_entregas_bd['data_conclusao']).dt.date
                 entregas_por_dia = df_entregas_bd.groupby('data_dt').size().to_dict()
 
-            # 4. Construir os dados para o Gráfico
             bd_dados = []
             real_restante = total_tickets
             passo_ideal = total_tickets / (qtd_dias - 1) if qtd_dias > 1 else 0
@@ -433,11 +433,9 @@ with aba_dashboard:
             for i, dia in enumerate(dias_sprint):
                 ideal_restante = total_tickets - (passo_ideal * i)
 
-                # Subtrai o que foi entregue neste dia específico
                 entregues_hoje = entregas_por_dia.get(dia, 0)
                 real_restante = real_restante - entregues_hoje
 
-                # Se o dia ainda não chegou (futuro), não desenhamos a linha azul
                 linha_real = real_restante if dia <= hoje else None
 
                 bd_dados.append({
@@ -448,7 +446,6 @@ with aba_dashboard:
 
             df_burndown = pd.DataFrame(bd_dados)
 
-            # 5. Desenhar o gráfico com Altair
             base = alt.Chart(df_burndown).encode(
                 x=alt.X('Data:O', sort=df_burndown['Data'].tolist(), title="Dias da Sprint")
             )
@@ -478,14 +475,11 @@ with aba_dashboard:
 
         if not df_backlog_filtrado.empty:
             
-            # PREVENÇÃO DE ERRO: Garante que a coluna existe mesmo se você ainda não clicou em "Atualizar" na aba de Gestão
             if 'data_criacao' not in df_backlog_filtrado.columns:
                 df_backlog_filtrado['data_criacao'] = "2000-01-01"
 
-            # 1. Descobrir a data de início da Sprint atual
             data_inicio_sprint = df_sprints[df_sprints['nome_exibicao'] == sprint_selecionada]['data_inicio'].iloc[0]
             
-            # 2. Filtrar APENAS os itens criados depois ou no mesmo dia do início da Sprint
             df_clientes_sprint = df_backlog_filtrado[df_backlog_filtrado['data_criacao'] >= data_inicio_sprint].copy()
 
             col_cli1, col_cli2 = st.columns([2, 3])
@@ -494,7 +488,6 @@ with aba_dashboard:
                 st.write("**Resumo de Carga por Cliente**")
                 
                 if not df_clientes_sprint.empty:
-                    # 3. Conta os itens com o DataFrame já filtrado
                     df_clientes = df_clientes_sprint.groupby('cliente')['issue_key'].count().reset_index()
                     df_clientes.columns = ['Cliente', 'Contagem']
                     df_clientes = df_clientes.sort_values(by='Contagem', ascending=False)
@@ -523,7 +516,7 @@ with aba_dashboard:
                     )
                 else:
                     st.info("Nenhum item novo criado para esta sprint até o momento.")
-                    df_clientes = pd.DataFrame(columns=['Cliente']) # Evita erro na coluna 2
+                    df_clientes = pd.DataFrame(columns=['Cliente']) 
 
             with col_cli2:
                 st.write("**Detalhamento de Tickets**")
@@ -533,7 +526,6 @@ with aba_dashboard:
                     cliente_selecionado = st.selectbox("Selecione o Cliente para detalhar:", lista_clientes)
 
                     if cliente_selecionado != "Todos":
-                        # Usa a base já filtrada por data (df_clientes_sprint)
                         df_detalhe_cliente = df_clientes_sprint[df_clientes_sprint['cliente'] == cliente_selecionado].copy()
                     else:
                         df_detalhe_cliente = df_clientes_sprint.copy()
