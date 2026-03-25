@@ -5,8 +5,56 @@ from supabase import create_client, Client
 from datetime import timedelta, datetime
 from somaCopia import executar_extracao
 import os
+import streamlit as st
+import streamlit as st
+from streamlit_google_auth import Authenticate
 
+# 1. INICIALIZAR O AUTENTICADOR
+# Verifique se o redirect_uri no secrets.toml é exatamente: http://localhost:8501
+authenticator = Authenticate(
+    secret_credentials_path='google_credentials.json', 
+    cookie_name='dds_auth_cookie',
+    cookie_key='dds_secret_key',
+    cookie_expiry_days=1,
+    redirect_uri=st.secrets["auth"]["redirect_uri"],
+)
 
+# 2. TENTAR RECUPERAR O LOGIN (A biblioteca tenta ler o cookie aqui)
+user_info = authenticator.login()
+
+# 3. LÓGICA DE PERSISTÊNCIA (O Pulo do Gato)
+if user_info:
+    # Se o Google devolveu o usuário, salvamos no estado do Streamlit
+    st.session_state["connected"] = True
+    st.session_state["user_info"] = user_info
+
+    # FILTRO DA WHITELIST (Segurança do Sergio)
+    email_logado = user_info.get('email')
+    lista_permitida = st.secrets["whitelist"]["emails"]
+
+    if email_logado not in lista_permitida:
+        st.error(f"Acesso Negado: O e-mail {email_logado} não está autorizado pela DDS.")
+        if st.button("Tentar outra conta"):
+            authenticator.logout()
+        st.stop()
+    
+    # SE PASSOU, EXIBE O PAINEL
+    st.sidebar.success(f"Conectado: {user_info.get('name')}")
+    if st.sidebar.button("Log out"):
+        authenticator.logout()
+        st.rerun()
+else:
+    # Se não logou, o app para aqui e mostra o botão do Google
+    st.stop()
+
+# --- DAQUI PARA BAIXO SEGUE O SEU CÓDIGO DA SPRINT ---
+st.write("### O Dashboard está liberado!") 
+# (Seus gráficos aqui...)
+
+# --- DAQUI PARA BAIXO SEGUE O SEU CÓDIGO ORIGINAL (Gráficos, Tabelas, etc) ---
+st.title("📊 Dashboard de Performance - DDS Informática")
+# Seu código do Jira/Supabase entra aqui...
+# --- ABAIXO SEGUE O SEU CÓDIGO DA SPRINT ---
 SUPABASE_URL = st.secrets["SUPABASE_URL"]
 SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
