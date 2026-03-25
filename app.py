@@ -6,45 +6,49 @@ from datetime import timedelta, datetime
 from somaCopia import executar_extracao
 import os
 import streamlit as st
-import streamlit as st
 from streamlit_google_auth import Authenticate
 
-# 1. INICIALIZAR O AUTENTICADOR
-# Verifique se o redirect_uri no secrets.toml é exatamente: http://localhost:8501
+# 1. INICIALIZAÇÃO
+# Certifique-se de que o segredo 'redirect_uri' no Cloud seja o link .app
+# Em produção, passamos None para o path e o redirect_uri do Secret
 authenticator = Authenticate(
-    secret_credentials_path='google_credentials.json', 
+    secret_credentials_path=None, # IMPORTANTE: Deixe None para ele não buscar arquivo físico
     cookie_name='dds_auth_cookie',
     cookie_key='dds_secret_key',
     cookie_expiry_days=1,
+    client_id=st.secrets["auth"]["client_id"],
+    client_secret=st.secrets["auth"]["client_secret"],
     redirect_uri=st.secrets["auth"]["redirect_uri"],
 )
 
-# 2. TENTAR RECUPERAR O LOGIN (A biblioteca tenta ler o cookie aqui)
+# 2. TENTATIVA DE LOGIN
+# O login() tenta ler os parâmetros que aparecem na sua URL (code, state)
 user_info = authenticator.login()
 
-# 3. LÓGICA DE PERSISTÊNCIA (O Pulo do Gato)
+# 3. VERIFICAÇÃO FORÇADA DE ESTADO
 if user_info:
-    # Se o Google devolveu o usuário, salvamos no estado do Streamlit
     st.session_state["connected"] = True
     st.session_state["user_info"] = user_info
-
-    # FILTRO DA WHITELIST (Segurança do Sergio)
-    email_logado = user_info.get('email')
-    lista_permitida = st.secrets["whitelist"]["emails"]
-
-    if email_logado not in lista_permitida:
-        st.error(f"Acesso Negado: O e-mail {email_logado} não está autorizado pela DDS.")
-        if st.button("Tentar outra conta"):
-            authenticator.logout()
-        st.stop()
     
-    # SE PASSOU, EXIBE O PAINEL
-    st.sidebar.success(f"Conectado: {user_info.get('name')}")
-    if st.sidebar.button("Log out"):
-        authenticator.logout()
-        st.rerun()
+    email_logado = user_info.get('email')
+    
+    # Validação da Whitelist (O que o Sergio pediu)
+    if email_logado in st.secrets["whitelist"]["emails"]:
+        st.sidebar.success(f"Logado: {email_logado}")
+        if st.sidebar.button("Log out"):
+            authenticator.logout()
+            st.rerun()
+        
+        # --- O SEU DASHBOARD VEM AQUI ---
+        st.write("### Acesso Liberado")
+        # seu_codigo_original()
+        
+    else:
+        st.error(f"E-mail {email_logado} não autorizado.")
+        st.stop()
 else:
-    # Se não logou, o app para aqui e mostra o botão do Google
+    # Se o login falhou ou voltou para a tela inicial sem processar a URL
+    st.info("Acesse com sua conta Google para visualizar os dados da Sprint.")
     st.stop()
 
 # --- DAQUI PARA BAIXO SEGUE O SEU CÓDIGO DA SPRINT ---
