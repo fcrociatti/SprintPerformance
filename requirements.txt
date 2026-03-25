@@ -3,4 +3,4 @@ pandas
 altair
 supabase
 requests
-streamlit-google-auth
+streamlit-authenticator

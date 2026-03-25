@@ -8,37 +8,30 @@ import os
 import streamlit as st
 from streamlit_google_auth import Authenticate
 import json
+import streamlit_authenticator as stauth
 
+names = ["Fernando", "Sergio", "Renato"]
+usernames = ["fernando", "sergio", "renato"]
 
+passwords = [st.secrets["passwords"]["fernando"], st.secrets["passwords"]["sergio"], st.secrets["passwords"]["renato"]]
 
-authenticator = Authenticate(
-    secret_credentials_path=None, # Forçamos a não usar arquivo
-    cookie_name='dds_auth_cookie',
-    cookie_key=st.secrets["auth"]["client_secret"], # Usamos a secret como chave do cookie
-    cookie_expiry_days=1,
+authenticator = stauth.Authenticate(
+    names, usernames, passwords,
+    'dds_dashboard_cookie', 'dds_key_123', cookie_expiry_days=1
 )
 
-user_info = authenticator.login()
+name, authentication_status, username = authenticator.login('Login - DDS Performance', 'main')
 
-if user_info:
-    email = user_info.get('email')
+if authentication_status:
+    st.sidebar.success(f"Bem-vindo, {name}")
+    authenticator.logout('Sair', 'sidebar')
     
-    if email in st.secrets["whitelist"]["emails"]:
-        st.sidebar.success(f"Logado: {email}")
-        if st.sidebar.button("Sair"):
-            authenticator.logout()
-            st.rerun()
-            
-        # --- SEU CÓDIGO DO DASHBOARD COMEÇA AQUI ---
-        st.title("📊 Painel de Performance - DDS")
-        
-    else:
-        st.error(f"Acesso Negado: {email} não autorizado.")
-        st.stop()
-else:
-    # Se não tem user_info, para tudo e mostra só o botão
-    st.info("Autenticação Google obrigatória para acessar dados da DDS.")
-    st.stop()
+    st.write("# Dashboard Liberado")
+
+elif authentication_status == False:
+    st.error('Usuário ou senha incorretos')
+elif authentication_status == None:
+    st.warning('Por favor, insira seu usuário e senha')
 
 st.write("### O Dashboard está liberado!") 
 
