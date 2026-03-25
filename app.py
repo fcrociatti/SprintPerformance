@@ -45,7 +45,6 @@ if not df_sprints.empty:
     df_sprints['nome_exibicao'] = df_sprints['descricao'] + " - " + df_sprints['nome_sprint']
 
 
-# CRIANDO ABAS (AGORA SÃO 3)
 aba_dashboard, aba_historico, aba_sincronizacao = st.tabs(["📈 Visão da Sprint", "📊 Histórico & Desempenho", "⚙️ Gerenciar Sprints"])
 
 
@@ -90,7 +89,6 @@ with aba_historico:
                 sust_periodo = df_hist[df_hist['categoria'] == 'Sustentação']['pontos'].sum()
                 desv_periodo = df_hist[df_hist['categoria'] == 'Desenvolvimento']['pontos'].sum()
                 
-                # Criamos 4 colunas em vez de 3 para acomodar a média
                 c_hist1, c_hist2, c_hist3, c_hist4 = st.columns(4)
                 
                 c_hist1.metric("Total Acumulado", f"{total_periodo:.1f} pts")
@@ -255,8 +253,7 @@ with aba_dashboard:
 
             col_eq1, col_eq2 = st.columns(2)
 
-           
-            with col_eq2:
+            with col_eq1:
                 with st.container(border=True):
                     st.markdown("#### 💼 Composição: Gestão (Foco)")
                     st.metric("Total Foco Sérgio+Eder", sergio + eder)
@@ -287,7 +284,7 @@ with aba_dashboard:
                         st.altair_chart((donut + text_donut).properties(height=250), use_container_width=True, theme="streamlit")
                     else: st.info("Sem dados de gestão.")
 
-             with col_eq1:
+            with col_eq2:
                 with st.container(border=True):
                     st.markdown("#### 🔎 Composição: Equipa de Análise")
                     st.metric("Total Análise", anderson + fernando + gustavo + nathan)
@@ -310,7 +307,6 @@ with aba_dashboard:
                         label_comp = bar_comp.mark_text(align='left', baseline='middle', dx=5, color='white').encode(text='quantidade:Q')
                         st.altair_chart((bar_comp + label_comp).properties(height=200), use_container_width=True, theme="streamlit")
                     else: st.info("Sem dados de análise.")
-
 
             with st.expander("🔍 Ver outros colaboradores e lista completa do backlog"):
                 if todos_os_outros > 0:
