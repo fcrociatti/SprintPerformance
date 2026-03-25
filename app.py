@@ -8,57 +8,53 @@ import os
 import streamlit as st
 from streamlit_google_auth import Authenticate
 
-# 1. INICIALIZAÇÃO
-# Certifique-se de que o segredo 'redirect_uri' no Cloud seja o link .app
-# Em produção, passamos None para o path e o redirect_uri do Secret
+# Configura o dicionário pra não precisar de arquivo JSON no servidor
+google_secrets = {
+    "web": {
+        "client_id": st.secrets["auth"]["client_id"],
+        "client_secret": st.secrets["auth"]["client_secret"],
+        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+        "token_uri": "https://oauth2.googleapis.com/token",
+        "redirect_uris": [st.secrets["auth"]["redirect_uri"]],
+    }
+}
+
+# Inicializa o autenticador com os dados do secrets.toml
 authenticator = Authenticate(
-    secret_credentials_path=None, # IMPORTANTE: Deixe None para ele não buscar arquivo físico
+    secret_credentials_path=google_secrets, 
     cookie_name='dds_auth_cookie',
     cookie_key='dds_secret_key',
     cookie_expiry_days=1,
-    client_id=st.secrets["auth"]["client_id"],
-    client_secret=st.secrets["auth"]["client_secret"],
     redirect_uri=st.secrets["auth"]["redirect_uri"],
 )
 
-# 2. TENTATIVA DE LOGIN
-# O login() tenta ler os parâmetros que aparecem na sua URL (code, state)
+# Chama o login do Google
 user_info = authenticator.login()
 
-# 3. VERIFICAÇÃO FORÇADA DE ESTADO
 if user_info:
-    st.session_state["connected"] = True
-    st.session_state["user_info"] = user_info
-    
+    # Valida se o e-mail tá na lista que eu e o Sergio definimos
     email_logado = user_info.get('email')
-    
-    # Validação da Whitelist (O que o Sergio pediu)
     if email_logado in st.secrets["whitelist"]["emails"]:
         st.sidebar.success(f"Logado: {email_logado}")
-        if st.sidebar.button("Log out"):
+        
+        # Logout caso precise trocar de conta
+        if st.sidebar.button("Sair"):
             authenticator.logout()
             st.rerun()
-        
-        # --- O SEU DASHBOARD VEM AQUI ---
-        st.write("### Acesso Liberado")
-        # seu_codigo_original()
-        
+            
+        # Segue pro dashboard
     else:
-        st.error(f"E-mail {email_logado} não autorizado.")
+        st.error("E-mail não autorizado. Falar com o admin.")
         st.stop()
 else:
-    # Se o login falhou ou voltou para a tela inicial sem processar a URL
-    st.info("Acesse com sua conta Google para visualizar os dados da Sprint.")
+    # Trava o app na tela de login
     st.stop()
 
-# --- DAQUI PARA BAIXO SEGUE O SEU CÓDIGO DA SPRINT ---
-st.write("### O Dashboard está liberado!") 
-# (Seus gráficos aqui...)
 
-# --- DAQUI PARA BAIXO SEGUE O SEU CÓDIGO ORIGINAL (Gráficos, Tabelas, etc) ---
+st.write("### O Dashboard está liberado!") 
+
 st.title("📊 Dashboard de Performance - DDS Informática")
-# Seu código do Jira/Supabase entra aqui...
-# --- ABAIXO SEGUE O SEU CÓDIGO DA SPRINT ---
+
 SUPABASE_URL = st.secrets["SUPABASE_URL"]
 SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
