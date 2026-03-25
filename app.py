@@ -11,7 +11,7 @@ SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 st.set_page_config(layout="wide", page_title="Dashboard de Sprints DDS")
-st.title("📊 Controle de Produtividade - Sprints")
+st.title("📊 Sprint Performance  - DDS ")
 
 # ==========================================
 # CARREGAMENTO GLOBAL DOS DADOS
@@ -255,30 +255,7 @@ with aba_dashboard:
 
             col_eq1, col_eq2 = st.columns(2)
 
-            with col_eq1:
-                with st.container(border=True):
-                    st.markdown("#### 🔎 Composição: Equipa de Análise")
-                    st.metric("Total Análise", anderson + fernando + gustavo + nathan)
-                    st.divider()
-                    
-                    c1, c2, c3, c4 = st.columns(4)
-                    c1.metric("Anderson", anderson)
-                    c2.metric("Fernando", fernando)
-                    c3.metric("Gustavo", gustavo)
-                    c4.metric("Nathan", nathan)
-
-                    st.markdown("<br>", unsafe_allow_html=True)
-                    df_an_comp = pd.DataFrame({'responsavel': ["Anderson", "Fernando", "Gustavo", "Nathan"],'quantidade': [anderson, fernando, gustavo, nathan]})
-                    if not df_an_comp.empty:
-                        bar_comp = alt.Chart(df_an_comp).mark_bar(color='#CC6677').encode(
-                            x=alt.X('quantidade:Q', title='Qtd de Itens', axis=alt.Axis(grid=False)),
-                            y=alt.Y('responsavel:N', sort='-x', title=''),
-                            tooltip=['responsavel', 'quantidade']
-                        )
-                        label_comp = bar_comp.mark_text(align='left', baseline='middle', dx=5, color='white').encode(text='quantidade:Q')
-                        st.altair_chart((bar_comp + label_comp).properties(height=200), use_container_width=True, theme="streamlit")
-                    else: st.info("Sem dados de análise.")
-
+           
             with col_eq2:
                 with st.container(border=True):
                     st.markdown("#### 💼 Composição: Gestão (Foco)")
@@ -309,6 +286,31 @@ with aba_dashboard:
                         text_donut = base_donut.mark_text(radius=120, color='white').encode(text="quantidade:Q", order=alt.Order("quantidade:Q", sort="descending"))
                         st.altair_chart((donut + text_donut).properties(height=250), use_container_width=True, theme="streamlit")
                     else: st.info("Sem dados de gestão.")
+
+             with col_eq1:
+                with st.container(border=True):
+                    st.markdown("#### 🔎 Composição: Equipa de Análise")
+                    st.metric("Total Análise", anderson + fernando + gustavo + nathan)
+                    st.divider()
+                    
+                    c1, c2, c3, c4 = st.columns(4)
+                    c1.metric("Anderson", anderson)
+                    c2.metric("Fernando", fernando)
+                    c3.metric("Gustavo", gustavo)
+                    c4.metric("Nathan", nathan)
+
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    df_an_comp = pd.DataFrame({'responsavel': ["Anderson", "Fernando", "Gustavo", "Nathan"],'quantidade': [anderson, fernando, gustavo, nathan]})
+                    if not df_an_comp.empty:
+                        bar_comp = alt.Chart(df_an_comp).mark_bar(color='#CC6677').encode(
+                            x=alt.X('quantidade:Q', title='Qtd de Itens', axis=alt.Axis(grid=False)),
+                            y=alt.Y('responsavel:N', sort='-x', title=''),
+                            tooltip=['responsavel', 'quantidade']
+                        )
+                        label_comp = bar_comp.mark_text(align='left', baseline='middle', dx=5, color='white').encode(text='quantidade:Q')
+                        st.altair_chart((bar_comp + label_comp).properties(height=200), use_container_width=True, theme="streamlit")
+                    else: st.info("Sem dados de análise.")
+
 
             with st.expander("🔍 Ver outros colaboradores e lista completa do backlog"):
                 if todos_os_outros > 0:
