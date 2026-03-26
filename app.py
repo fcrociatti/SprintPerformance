@@ -5,37 +5,9 @@ from supabase import create_client, Client
 from datetime import timedelta, datetime
 from somaCopia import executar_extracao
 import os
-import streamlit as st
-from streamlit_google_auth import Authenticate
-import json
-import streamlit_authenticator as stauth
 
-names = ["Fernando", "Sergio", "Renato"]
-usernames = ["fernando", "sergio", "renato"]
+st.set_page_config(page_title="Sprint Performance - DDS", layout="wide")
 
-passwords = [st.secrets["passwords"]["fernando"], st.secrets["passwords"]["sergio"], st.secrets["passwords"]["renato"]]
-
-authenticator = stauth.Authenticate(
-    names, usernames, passwords,
-    'dds_dashboard_cookie', 'dds_key_123', cookie_expiry_days=1
-)
-
-name, authentication_status, username = authenticator.login('Login - DDS Performance', 'main')
-
-if authentication_status:
-    st.sidebar.success(f"Bem-vindo, {name}")
-    authenticator.logout('Sair', 'sidebar')
-    
-    st.write("# Dashboard Liberado")
-
-elif authentication_status == False:
-    st.error('Usuário ou senha incorretos')
-elif authentication_status == None:
-    st.warning('Por favor, insira seu usuário e senha')
-
-st.write("### O Dashboard está liberado!") 
-
-st.title("📊 Dashboard de Performance - DDS Informática")
 
 SUPABASE_URL = st.secrets["SUPABASE_URL"]
 SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
