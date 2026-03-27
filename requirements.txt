@@ -5,3 +5,4 @@ supabase
 requests
 streamlit-authenticator
 pymysql
+sqlalchemy 
