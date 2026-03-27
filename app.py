@@ -1,19 +1,13 @@
 import streamlit as st
 import pandas as pd
 import altair as alt
-from supabase import create_client, Client
 from datetime import timedelta, datetime
-from somaCopia import executar_extracao
+from somaCopia import executar_extracao 
 import os
 
 st.set_page_config(page_title="Sprint Performance - DDS", layout="wide")
 
-
-SUPABASE_URL = st.secrets["SUPABASE_URL"]
-SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-
-st.set_page_config(layout="wide", page_title="Dashboard de Sprints DDS")
+conn = st.connection("banco_dds", type="sql")
 
 col_titulo, col_logo = st.columns([5, 1])
 
@@ -22,28 +16,47 @@ with col_titulo:
 
 with col_logo:
     caminho_logo = "assets/logo.png" 
-    
     if os.path.exists(caminho_logo):
         st.write("") 
         st.image(caminho_logo, use_container_width=True)
 
+
 # ==========================================
-# CARREGAMENTO GLOBAL DOS DADOS
+# CARREGAMENTO GLOBAL DOS DADOS 
+# Usando st.connection e aliasing para não quebrar o frontend
 # ==========================================
 @st.cache_data(ttl=600)
 def carregar_issues():
-    response = supabase.table("sprint_details").select("*").execute()
-    return pd.DataFrame(response.data)
+    query = """
+        SELECT ID_SPRINT_DETAILS as id, ISSUE_KEY as issue_key, PROJETO as projeto, 
+               RESPONSAVEL as responsavel, TIPO_ITEM as tipo_item, CATEGORIA as categoria, 
+               PONTOS as pontos, DATA_CONCLUSAO as data_conclusao, ID_SPRINT as sprint_id, 
+               CLIENTE as cliente, RESUMO as resumo
+        FROM TB_SPRINT_DETAILS
+    """
+    return conn.query(query)
 
 @st.cache_data(ttl=600)
 def carregar_sprints():
-    response = supabase.table("sprints_master").select("*").order("data_inicio", desc=True).execute()
-    return pd.DataFrame(response.data)
+    query = """
+        SELECT ID_SPRINT as id, NOME_SPRINT as nome_sprint, DATA_INICIO as data_inicio, 
+               DATA_FIM as data_fim, ITENS_INICIAIS as itens_iniciais, 
+               TEMPO_REUNIAO_MIN as tempo_reuniao_min, DESCRICAO as descricao 
+        FROM TB_SPRINT 
+        ORDER BY DATA_INICIO DESC
+    """
+    return conn.query(query)
 
 @st.cache_data(ttl=600)
 def carregar_backlog():
-    response = supabase.table("sprint_backlog").select("*").execute()
-    return pd.DataFrame(response.data)
+    query = """
+        SELECT ID_SPRINT_BACKLOG as id, ID_SPRINT as sprint_id, ISSUE_KEY as issue_key, 
+               PROJETO as projeto, RESPONSAVEL as responsavel, PAPEL as papel, 
+               TIPO_ITEM as tipo_item, CLIENTE as cliente, RESUMO as resumo, 
+               DATA_CRIACAO as data_criacao 
+        FROM TB_SPRINT_BACKLOG
+    """
+    return conn.query(query)
 
 df_issues = carregar_issues()
 df_sprints = carregar_sprints()
@@ -60,11 +73,8 @@ if not df_sprints.empty:
 
 aba_dashboard,  aba_sincronizacao, aba_historico = st.tabs(["📈 Visão da Sprint",  "⚙️ Gerenciar Sprints", "📊 Histórico & Desempenho"])
 
-
-
-
 # ==========================================
-# ABA 2: HISTÓRICO E DESEMPENHO (NOVA)
+# ABA 2: HISTÓRICO E DESEMPENHO 
 # ==========================================
 with aba_historico:
     st.subheader(" Avaliação de Desempenho (Múltiplas Sprints)")
@@ -166,8 +176,8 @@ with aba_sincronizacao:
                     sprint_conflito = ""
                     if not df_sprints.empty:
                         for _, row in df_sprints.iterrows():
-                            sp_ini = datetime.strptime(row['data_inicio'], "%Y-%m-%d").date()
-                            sp_fim = datetime.strptime(row['data_fim'], "%Y-%m-%d").date()
+                            sp_ini = row['data_inicio'] if not isinstance(row['data_inicio'], str) else datetime.strptime(row['data_inicio'], "%Y-%m-%d").date()
+                            sp_fim = row['data_fim'] if not isinstance(row['data_fim'], str) else datetime.strptime(row['data_fim'], "%Y-%m-%d").date()
                             if dt_inicio <= sp_fim and dt_fim >= sp_ini:
                                 sobreposicao = True
                                 sprint_conflito = row['descricao']
@@ -187,12 +197,15 @@ with aba_sincronizacao:
             sprint_para_atualizar = st.selectbox("Selecione a Sprint para Atualizar", df_sprints['nome_exibicao'].tolist())
             row_sprint = df_sprints[df_sprints['nome_exibicao'] == sprint_para_atualizar].iloc[0]
             with st.form("form_sync_atualiza"):
-                st.info(f"O sistema irá consultar o Jira novamente para o período de **{row_sprint['data_inicio']}** até **{row_sprint['data_fim']}**.")
+                dt_ini_str = row_sprint['data_inicio'].strftime("%Y-%m-%d") if not isinstance(row_sprint['data_inicio'], str) else row_sprint['data_inicio']
+                dt_fim_str = row_sprint['data_fim'].strftime("%Y-%m-%d") if not isinstance(row_sprint['data_fim'], str) else row_sprint['data_fim']
+                
+                st.info(f"O sistema irá consultar o Jira novamente para o período de **{dt_ini_str}** até **{dt_fim_str}**.")
                 btn_atualizar = st.form_submit_button("🔄 Atualizar Dados")
                 
                 if btn_atualizar:
-                    dt_inicio_upd = datetime.strptime(row_sprint['data_inicio'], "%Y-%m-%d").date()
-                    dt_fim_upd = datetime.strptime(row_sprint['data_fim'], "%Y-%m-%d").date()
+                    dt_inicio_upd = row_sprint['data_inicio'] if not isinstance(row_sprint['data_inicio'], str) else datetime.strptime(row_sprint['data_inicio'], "%Y-%m-%d").date()
+                    dt_fim_upd = row_sprint['data_fim'] if not isinstance(row_sprint['data_fim'], str) else datetime.strptime(row_sprint['data_fim'], "%Y-%m-%d").date()
                     desc_upd = row_sprint['descricao']
                     with st.spinner(f"Atualizando dados da {sprint_para_atualizar}..."):
                         sucesso, mensagem = executar_extracao(dt_inicio_upd, dt_fim_upd, desc_upd)
@@ -201,7 +214,6 @@ with aba_sincronizacao:
                             st.cache_data.clear()
                         else: st.error(f"❌ Falha: {mensagem}")
         else: st.warning("Nenhuma Sprint cadastrada para atualizar.")
-
 
 
 # ==========================================
@@ -227,9 +239,6 @@ with aba_dashboard:
         if not df_backlog.empty: df_backlog_filtrado = df_backlog[(df_backlog['projeto'].isin(projeto)) & (df_backlog['sprint_id'] == id_sprint_selecionada)].copy()
         else: df_backlog_filtrado = pd.DataFrame()
 
-        # ==========================================
-        # SECÇÃO 1: RAIO-X DO BACKLOG
-        # ==========================================
         st.subheader(f"📋 Visão Geral da {sprint_selecionada.split(' - ')[0]} (Itens pendentes)")
         
         if not df_backlog_filtrado.empty:
@@ -255,8 +264,8 @@ with aba_dashboard:
                 st.markdown("#### 📌 Marcadores Principais (Jira)")
                 colA, colB, colC = st.columns(3)
                 colA.metric("Total de Itens", total_itens)
-                colB.metric("Sustentação", itens_sust, f"{(itens_sust/total_itens*100):.1f}%")
-                colC.metric("Desenvolvimento", itens_desv, f"{(itens_desv/total_itens*100):.1f}%")
+                colB.metric("Sustentação", itens_sust, f"{(itens_sust/total_itens*100):.1f}%" if total_itens > 0 else "0%")
+                colC.metric("Desenvolvimento", itens_desv, f"{(itens_desv/total_itens*100):.1f}%" if total_itens > 0 else "0%")
 
             col_eq1, col_eq2 = st.columns(2)
 
@@ -340,9 +349,6 @@ with aba_dashboard:
 
         st.divider()
 
-        # ==========================================
-        # SECÇÃO 2: ENTREGAS
-        # ==========================================
         st.subheader(f"✅ Entregas da {sprint_selecionada.split(' - ')[0]} (Pontos)")
 
         if not df_filtrado.empty:
@@ -402,11 +408,6 @@ with aba_dashboard:
         else:
             st.info("Nenhuma entrega contabilizada.")
 
-
-
-        # ==========================================
-        # BURNDOWN DA SPRINT (TICKETS)
-        # ==========================================
         st.divider()
         st.subheader("📉 Burndown da Sprint")
 
@@ -415,8 +416,9 @@ with aba_dashboard:
 
             data_ini_str = df_sprints[df_sprints['nome_exibicao'] == sprint_selecionada]['data_inicio'].iloc[0]
             data_fim_str = df_sprints[df_sprints['nome_exibicao'] == sprint_selecionada]['data_fim'].iloc[0]
-            data_ini = datetime.strptime(data_ini_str, "%Y-%m-%d").date()
-            data_fim = datetime.strptime(data_fim_str, "%Y-%m-%d").date()
+            
+            data_ini = data_ini_str if not isinstance(data_ini_str, str) else datetime.strptime(data_ini_str, "%Y-%m-%d").date()
+            data_fim = data_fim_str if not isinstance(data_fim_str, str) else datetime.strptime(data_fim_str, "%Y-%m-%d").date()
             
             qtd_dias = (data_fim - data_ini).days + 1
             dias_sprint = [data_ini + timedelta(days=x) for x in range(qtd_dias)]
@@ -469,9 +471,6 @@ with aba_dashboard:
             st.info("Sem dados suficientes para gerar o Burndown.")
 
 
-       # ==========================================
-        # SECÇÃO 3: ITENS POR CLIENTE (NOVA E ÚLTIMA SECÇÃO)
-        # ==========================================
         st.divider()
         st.subheader("🏢 Itens por Cliente (Planning)")
 
@@ -482,7 +481,8 @@ with aba_dashboard:
 
             data_inicio_sprint = df_sprints[df_sprints['nome_exibicao'] == sprint_selecionada]['data_inicio'].iloc[0]
             
-            df_clientes_sprint = df_backlog_filtrado[df_backlog_filtrado['data_criacao'] >= data_inicio_sprint].copy()
+            data_ini_str_comp = data_inicio_sprint.strftime("%Y-%m-%d") if not isinstance(data_inicio_sprint, str) else data_inicio_sprint
+            df_clientes_sprint = df_backlog_filtrado[df_backlog_filtrado['data_criacao'] >= data_ini_str_comp].copy()
 
             col_cli1, col_cli2 = st.columns([2, 3])
 
@@ -494,7 +494,6 @@ with aba_dashboard:
                     df_clientes.columns = ['Cliente', 'Contagem']
                     df_clientes = df_clientes.sort_values(by='Contagem', ascending=False)
                     
-                    # Calcula a porcentagem
                     total_cli = df_clientes['Contagem'].sum()
                     if total_cli > 0:
                         df_clientes['Porcentagem'] = (df_clientes['Contagem'] / total_cli) * 100

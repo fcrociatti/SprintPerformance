@@ -3,11 +3,9 @@ import requests
 from requests.auth import HTTPBasicAuth
 from datetime import datetime, timezone
 import pandas as pd
-from supabase import create_client, Client
+from sqlalchemy import text 
 
-SUPABASE_URL = st.secrets["SUPABASE_URL"]
-SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+conn = st.connection("banco_dds", type="sql") 
 
 JIRA_URL = st.secrets["JIRA_URL"]
 JIRA_USER = st.secrets["JIRA_USER"]
@@ -31,7 +29,6 @@ auth = HTTPBasicAuth(JIRA_USER, JIRA_TOKEN)
 periodos = []
 
 def extrair_cliente(issue_fields):
-    """Função de segurança para extrair o nome do cliente não importando o formato do JSON"""
     cliente_raw = issue_fields.get(CUSTOM_CLIENTE_FIELD)
     if cliente_raw:
         if isinstance(cliente_raw, dict) and "value" in cliente_raw:
@@ -41,7 +38,6 @@ def extrair_cliente(issue_fields):
         else:
             return str(cliente_raw)
     return "Sem Cliente"
-
 
 def obter_dados_projeto(projeto):
     dados = []
@@ -100,9 +96,14 @@ def obter_dados_projeto(projeto):
             cliente_nome = extrair_cliente(issue["fields"])
                 
             dados.append({
-                "Key": key, "Data_Transicao": data_transicao.isoformat(), "Responsável": dev,
-                "Tipo": tipo_item_nome, "Pontos_Sustentacao": pontos_sustentacao, "Pontos_Desenvolvimento": pontos_desenvolvimento,
-                "Resumo": resumo, "Cliente": cliente_nome
+                "Key": key, 
+                "Data_Transicao": data_transicao.strftime("%Y-%m-%d %H:%M:%S"), # (ALTERADO AGORA) Formato MySQL
+                "Responsável": dev,
+                "Tipo": tipo_item_nome, 
+                "Pontos_Sustentacao": pontos_sustentacao, 
+                "Pontos_Desenvolvimento": pontos_desenvolvimento,
+                "Resumo": resumo, 
+                "Cliente": cliente_nome
             })
 
         if data_json.get("isLast") or not data_json.get("issues", []): break
@@ -111,17 +112,13 @@ def obter_dados_projeto(projeto):
 
     return dados
 
-# Hardcode inicial 
+# Hardcode de analistas mantido para a v1 (ALTERADO AGORA)
 ANALISTAS = ["Fernando", "Anderson", "Gustavo", "Nathan"]
 
 def extrair_e_salvar_backlog(projeto, sprint_id):
-    """
-    Roda o JQL de itens pendentes na sprint e salva um "snapshot" na tabela sprint_backlog.
-    """
     dados_backlog = []
     next_token = ""
     
-    # JQL BASE
     jql_backlog = (
         f'type != bug AND project = "{projeto}" '
         f'AND Sprint in (openSprints(),EMPTY) '
@@ -149,7 +146,6 @@ def extrair_e_salvar_backlog(projeto, sprint_id):
         for issue in data_json.get("issues", []):
             key = issue["key"]
             
-            
             assignee = issue["fields"].get("assignee")
             dev_nome = assignee["displayName"] if assignee else "Sem responsável"
             
@@ -164,44 +160,76 @@ def extrair_e_salvar_backlog(projeto, sprint_id):
             data_criacao_raw = issue["fields"].get("created", "")
             data_criacao = data_criacao_raw[:10] if data_criacao_raw else "2000-01-01"
 
-
             dados_backlog.append({
-                "sprint_id": sprint_id,
-                "issue_key": key,
-                "projeto": projeto,
-                "responsavel": dev_nome,
-                "papel": papel,
-                "tipo_item": tipo_item_nome,
-                "resumo": resumo,
-                "cliente": cliente_nome, 
-                "data_criacao" : data_criacao
+                "ID_SPRINT": sprint_id, # (ALTERADO AGORA) Nomenclatura DDS
+                "ISSUE_KEY": key,
+                "PROJETO": projeto,
+                "RESPONSAVEL": dev_nome,
+                "PAPEL": papel,
+                "TIPO_ITEM": tipo_item_nome,
+                "RESUMO": resumo,
+                "CLIENTE": cliente_nome, 
+                "DATA_CRIACAO" : data_criacao
             })
 
         if data_json.get("isLast") or not data_json.get("issues", []): break
         next_token = data_json.get("nextPageToken")
         if not next_token: break
 
+    # Gravação no MySQL usando ON DUPLICATE KEY UPDATE (ALTERADO AGORA)
     if dados_backlog:
         try:
-            supabase.table("sprint_backlog").upsert(dados_backlog, on_conflict="sprint_id, issue_key").execute()
-            print(f"✅ Backlog da Sprint ({len(dados_backlog)} itens) salvo com sucesso!")
+            query = text("""
+                INSERT INTO TB_SPRINT_BACKLOG 
+                (ID_SPRINT, ISSUE_KEY, PROJETO, RESPONSAVEL, PAPEL, TIPO_ITEM, RESUMO, CLIENTE, DATA_CRIACAO)
+                VALUES 
+                (:ID_SPRINT, :ISSUE_KEY, :PROJETO, :RESPONSAVEL, :PAPEL, :TIPO_ITEM, :RESUMO, :CLIENTE, :DATA_CRIACAO)
+                ON DUPLICATE KEY UPDATE 
+                RESPONSAVEL = VALUES(RESPONSAVEL), PAPEL = VALUES(PAPEL), 
+                TIPO_ITEM = VALUES(TIPO_ITEM), RESUMO = VALUES(RESUMO), CLIENTE = VALUES(CLIENTE)
+            """)
+            with conn.session as s:
+                s.execute(query, dados_backlog)
+                s.commit()
+            print(f"✅ Backlog da Sprint ({len(dados_backlog)} itens) salvo no MySQL!")
         except Exception as e:
-            print(f"❌ Erro ao salvar backlog no Supabase: {e}")
+            print(f"❌ Erro ao salvar backlog no MySQL: {e}")
 
-def sincronizar_com_supabase(dados_extracao, projeto_nome, sprint_id):
+# Função renomeada e adaptada para MySQL (ALTERADO AGORA)
+def sincronizar_com_banco(dados_extracao, projeto_nome, sprint_id):
     if not dados_extracao: return
     payload = []
     for item in dados_extracao:
         payload.append({
-            "issue_key": item["Key"], "projeto": projeto_nome, "responsavel": item["Responsável"],
-            "tipo_item": item["Tipo"], "categoria": "Sustentação" if item["Pontos_Sustentacao"] > 0 else "Desenvolvimento",
-            "pontos": item["Pontos_Sustentacao"] + item["Pontos_Desenvolvimento"],
-            "data_conclusao": item["Data_Transicao"], "sprint_id": sprint_id,
-            "resumo": item["Resumo"], "cliente": item["Cliente"] 
+            "ISSUE_KEY": item["Key"], 
+            "PROJETO": projeto_nome, 
+            "RESPONSAVEL": item["Responsável"],
+            "TIPO_ITEM": item["Tipo"], 
+            "CATEGORIA": "Sustentação" if item["Pontos_Sustentacao"] > 0 else "Desenvolvimento",
+            "PONTOS": item["Pontos_Sustentacao"] + item["Pontos_Desenvolvimento"],
+            "DATA_CONCLUSAO": item["Data_Transicao"], 
+            "ID_SPRINT": sprint_id,
+            "RESUMO": item["Resumo"], 
+            "CLIENTE": item["Cliente"] 
         })
-    supabase.table("sprint_details").upsert(payload, on_conflict="issue_key").execute()
+    
+    try:
+        query = text("""
+            INSERT INTO TB_SPRINT_DETAILS 
+            (ISSUE_KEY, PROJETO, RESPONSAVEL, TIPO_ITEM, CATEGORIA, PONTOS, DATA_CONCLUSAO, ID_SPRINT, RESUMO, CLIENTE)
+            VALUES 
+            (:ISSUE_KEY, :PROJETO, :RESPONSAVEL, :TIPO_ITEM, :CATEGORIA, :PONTOS, :DATA_CONCLUSAO, :ID_SPRINT, :RESUMO, :CLIENTE)
+            ON DUPLICATE KEY UPDATE 
+            RESPONSAVEL = VALUES(RESPONSAVEL), TIPO_ITEM = VALUES(TIPO_ITEM), CATEGORIA = VALUES(CATEGORIA), 
+            PONTOS = VALUES(PONTOS), DATA_CONCLUSAO = VALUES(DATA_CONCLUSAO), CLIENTE = VALUES(CLIENTE), RESUMO = VALUES(RESUMO)
+        """)
+        with conn.session as s:
+            s.execute(query, payload)
+            s.commit()
+    except Exception as e:
+        print(f"Erro na sincronização de detalhes: {e}")
 
-
+# Função adaptada para ler e gravar no MySQL (ALTERADO AGORA)
 def obter_ou_criar_sprint(inicio, fim, descricao):
     dt_inicio = inicio.date() if isinstance(inicio, datetime) else inicio
     dt_fim = fim.date() if isinstance(fim, datetime) else fim
@@ -213,22 +241,38 @@ def obter_ou_criar_sprint(inicio, fim, descricao):
     fim_str = dt_fim.strftime("%Y-%m-%d")
     nome_sprint = f"Sprint {dt_inicio.strftime('%d/%m')} a {dt_fim.strftime('%d/%m')}"
 
-    resposta = supabase.table("sprints_master").select("*").order("data_fim", desc=True).execute()
-    sprints_existentes = resposta.data
+    # Busca no MySQL e transforma em lista de dicts para manter a lógica original (ALTERADO AGORA)
+    df_sprints = conn.query("SELECT * FROM TB_SPRINT ORDER BY DATA_FIM DESC")
+    sprints_existentes = df_sprints.to_dict('records')
 
     for sp in sprints_existentes:
-        if sp['data_inicio'] == inicio_str and sp['data_fim'] == fim_str:
-            return sp['id'], "Sprint existente encontrada e vinculada."
+        # Tratamento de data caso o pandas converta para objeto Date (ALTERADO AGORA)
+        sp_inicio_str = sp['DATA_INICIO'].strftime("%Y-%m-%d") if not isinstance(sp['DATA_INICIO'], str) else sp['DATA_INICIO']
+        sp_fim_str = sp['DATA_FIM'].strftime("%Y-%m-%d") if not isinstance(sp['DATA_FIM'], str) else sp['DATA_FIM']
+
+        if sp_inicio_str == inicio_str and sp_fim_str == fim_str:
+            return sp['ID_SPRINT'], "Sprint existente encontrada e vinculada."
 
     for sp in sprints_existentes:
-        sp_inicio = datetime.strptime(sp['data_inicio'], "%Y-%m-%d").date()
-        sp_fim = datetime.strptime(sp['data_fim'], "%Y-%m-%d").date()
+        sp_inicio = sp['DATA_INICIO'] if not isinstance(sp['DATA_INICIO'], str) else datetime.strptime(sp['DATA_INICIO'], "%Y-%m-%d").date()
+        sp_fim = sp['DATA_FIM'] if not isinstance(sp['DATA_FIM'], str) else datetime.strptime(sp['DATA_FIM'], "%Y-%m-%d").date()
+        
         if dt_inicio <= sp_fim and dt_fim >= sp_inicio:
-            return None, f"Sobreposição detectada com a {sp['nome_sprint']}."
+            return None, f"Sobreposição detectada com a {sp['NOME_SPRINT']}."
 
-    nova_sprint = {"nome_sprint": nome_sprint, "data_inicio": inicio_str, "data_fim": fim_str, "descricao": descricao}
-    insercao = supabase.table("sprints_master").insert(nova_sprint).execute()
-    return insercao.data[0]['id'], "Nova Sprint cadastrada com sucesso!"
+    # Grava a nova Sprint e captura o ID gerado pelo AUTO_INCREMENT (ALTERADO AGORA)
+    nova_sprint = {"nome": nome_sprint, "inicio": inicio_str, "fim": fim_str, "descricao": descricao}
+    try:
+        with conn.session as s:
+            result = s.execute(text("""
+                INSERT INTO TB_SPRINT (NOME_SPRINT, DATA_INICIO, DATA_FIM, DESCRICAO) 
+                VALUES (:nome, :inicio, :fim, :descricao)
+            """), nova_sprint)
+            s.commit()
+            novo_id = result.lastrowid # Pega o ID_SPRINT que o MySQL acabou de criar
+        return novo_id, "Nova Sprint cadastrada com sucesso no banco!"
+    except Exception as e:
+        return None, f"Erro ao criar Sprint no banco: {e}"
 
 def executar_extracao(data_inicio_input, data_fim_input, descricao_input):
     global periodos
@@ -244,7 +288,7 @@ def executar_extracao(data_inicio_input, data_fim_input, descricao_input):
         
     try:
         dados_star_pontos = obter_dados_projeto("STAR")
-        sincronizar_com_supabase(dados_star_pontos, "STAR", id_sprint)
+        sincronizar_com_banco(dados_star_pontos, "STAR", id_sprint) # (ALTERADO AGORA)
         
         hoje = datetime.now(timezone.utc)
         

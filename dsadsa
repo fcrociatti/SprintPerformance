@@ -1,0 +1,43 @@
+CREATE TABLE sprints_master (
+    id int8 PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    nome_sprint text NOT NULL,
+    data_inicio date NOT NULL,
+    data_fim date NOT NULL,
+    itens_iniciais int4 DEFAULT 0,
+    tempo_reuniao_min float8 DEFAULT 0,
+    created_at timestamptz DEFAULT now(),
+    descricao text NOT NULL
+);
+
+CREATE TABLE sprint_details (
+    id int8 PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    issue_key text UNIQUE NOT NULL, -- Garante que não duplique a mesma issue
+    projeto text NOT NULL, -- ELFA ou STAR
+    responsavel text NOT NULL,
+    tipo_item text, -- Bug, Task, etc
+    categoria text, -- Sustentação ou Desenvolvimento
+    pontos float8 DEFAULT 0,
+    data_conclusao timestamptz,
+    sprint_id int8 REFERENCES sprints_master(id), -- Liga com a tabela de cima
+    created_at timestamptz DEFAULT now(),
+    cliente text DEFAULT "Sem cliente",
+    resumo text
+);
+
+
+CREATE TABLE sprint_backlog (
+    id int8 PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    sprint_id int8 REFERENCES sprints_master(id),
+    issue_key text NOT NULL,
+    projeto text NOT NULL,
+    responsavel text NOT NULL,
+    papel text, -- Aqui salvaremos 'Analista' ou 'Desenvolvedor'
+    tipo_item text,
+    created_at timestamptz DEFAULT now(),
+    UNIQUE(sprint_id, issue_key),
+    cliente text DEFAULT "Sem cliente",
+    resumo text,
+    data_criacao text
+
+);
+

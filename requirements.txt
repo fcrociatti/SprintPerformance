@@ -4,3 +4,4 @@ altair
 supabase
 requests
 streamlit-authenticator
+pymysql
