@@ -1,43 +1,42 @@
-CREATE TABLE sprints_master (
-    id int8 PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
-    nome_sprint text NOT NULL,
-    data_inicio date NOT NULL,
-    data_fim date NOT NULL,
-    itens_iniciais int4 DEFAULT 0,
-    tempo_reuniao_min float8 DEFAULT 0,
-    created_at timestamptz DEFAULT now(),
-    descricao text NOT NULL
+CREATE TABLE TB_SPRINT (
+    ID_SPRINT INT PRIMARY KEY AUTO_INCREMENT,
+    NOME_SPRINT VARCHAR(255) NOT NULL,
+    DATA_INICIO DATE NOT NULL,
+    DATA_FIM DATE NOT NULL,
+    ITENS_INICIAIS INT DEFAULT 0,
+    TEMPO_REUNIAO_MIN FLOAT DEFAULT 0,
+    DESCRICAO TEXT,
+    CREATED DATETIME DEFAULT CURRENT_TIMESTAMP()
 );
 
-CREATE TABLE sprint_details (
-    id int8 PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
-    issue_key text UNIQUE NOT NULL, -- Garante que não duplique a mesma issue
-    projeto text NOT NULL, -- ELFA ou STAR
-    responsavel text NOT NULL,
-    tipo_item text, -- Bug, Task, etc
-    categoria text, -- Sustentação ou Desenvolvimento
-    pontos float8 DEFAULT 0,
-    data_conclusao timestamptz,
-    sprint_id int8 REFERENCES sprints_master(id), -- Liga com a tabela de cima
-    created_at timestamptz DEFAULT now(),
-    cliente text DEFAULT "Sem cliente",
-    resumo text
+CREATE TABLE TB_SPRINT_DETAILS (
+    ID_SPRINT_DETAILS INT PRIMARY KEY AUTO_INCREMENT,
+    ISSUE_KEY VARCHAR(50) UNIQUE NOT NULL,
+    PROJETO VARCHAR(100) NOT NULL,
+    RESPONSAVEL VARCHAR(150) NOT NULL,
+    TIPO_ITEM VARCHAR(50),
+    CATEGORIA VARCHAR(100),
+    PONTOS FLOAT DEFAULT 0,
+    DATA_CONCLUSAO DATETIME,
+    CLIENTE VARCHAR(150),
+    RESUMO TEXT,
+    ID_SPRINT INT,
+    CREATED DATETIME DEFAULT CURRENT_TIMESTAMP(),
+    FOREIGN KEY (ID_SPRINT) REFERENCES TB_SPRINT(ID_SPRINT)
 );
 
-
-CREATE TABLE sprint_backlog (
-    id int8 PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
-    sprint_id int8 REFERENCES sprints_master(id),
-    issue_key text NOT NULL,
-    projeto text NOT NULL,
-    responsavel text NOT NULL,
-    papel text, -- Aqui salvaremos 'Analista' ou 'Desenvolvedor'
-    tipo_item text,
-    created_at timestamptz DEFAULT now(),
-    UNIQUE(sprint_id, issue_key),
-    cliente text DEFAULT "Sem cliente",
-    resumo text,
-    data_criacao text
-
+CREATE TABLE TB_SPRINT_BACKLOG (
+    ID_SPRINT_BACKLOG INT PRIMARY KEY AUTO_INCREMENT,
+    ID_SPRINT INT,
+    ISSUE_KEY VARCHAR(50) NOT NULL,
+    PROJETO VARCHAR(100) NOT NULL,
+    RESPONSAVEL VARCHAR(150) NOT NULL,
+    PAPEL VARCHAR(50),
+    TIPO_ITEM VARCHAR(50),
+    CLIENTE VARCHAR(150),
+    RESUMO TEXT,
+    DATA_CRIACAO VARCHAR(50), 
+    CREATED DATETIME DEFAULT CURRENT_TIMESTAMP(),
+    FOREIGN KEY (ID_SPRINT) REFERENCES TB_SPRINT(ID_SPRINT),
+    UNIQUE (ID_SPRINT, ISSUE_KEY)
 );
-
