@@ -41,7 +41,10 @@ def carregar_sprints():
     query = """
         SELECT ID_SPRINT as id, NOME_SPRINT as nome_sprint, DATA_INICIO as data_inicio, 
                DATA_FIM as data_fim, ITENS_INICIAIS as itens_iniciais, 
-               TEMPO_REUNIAO_MIN as tempo_reuniao_min, DESCRICAO as descricao 
+               TEMPO_REUNIAO_MIN as tempo_reuniao_min, DESCRICAO as descricao,
+               INI_TOTAL as ini_total, INI_SUST as ini_sust, INI_DESV as ini_desv,
+               CHK_TOTAL as chk_total, CHK_SUST as chk_sust, CHK_DESV as chk_desv,
+               FIN_TOTAL as fin_total, FIN_SUST as fin_sust, FIN_DESV as fin_desv
         FROM TB_SPRINT 
         ORDER BY DATA_INICIO DESC
     """
@@ -185,7 +188,7 @@ with aba_sincronizacao:
                     if sobreposicao: st.error(f"❌ Sobreposição detetada com: **{sprint_conflito}**.")
                     else:
                         with st.spinner('A conectar ao Jira...'):
-                            sucesso, mensagem = executar_extracao(dt_inicio, dt_fim, descricao_input)
+                            sucesso, mensagem = executar_extracao(dt_inicio, dt_fim, descricao_input, False) 
                             if sucesso:
                                 st.success(f"✅ Dados importados!")
                                 st.cache_data.clear()
@@ -201,6 +204,11 @@ with aba_sincronizacao:
                 dt_fim_str = row_sprint['data_fim'].strftime("%Y-%m-%d") if not isinstance(row_sprint['data_fim'], str) else row_sprint['data_fim']
                 
                 st.info(f"O sistema irá consultar o Jira novamente para o período de **{dt_ini_str}** até **{dt_fim_str}**.")
+                
+                st.markdown("---")
+                is_checkpoint = st.checkbox(" Registrar contagem como Checkpoint")
+                st.markdown("---")
+
                 btn_atualizar = st.form_submit_button("🔄 Atualizar Dados")
                 
                 if btn_atualizar:
@@ -208,13 +216,13 @@ with aba_sincronizacao:
                     dt_fim_upd = row_sprint['data_fim'] if not isinstance(row_sprint['data_fim'], str) else datetime.strptime(row_sprint['data_fim'], "%Y-%m-%d").date()
                     desc_upd = row_sprint['descricao']
                     with st.spinner(f"Atualizando dados da {sprint_para_atualizar}..."):
-                        sucesso, mensagem = executar_extracao(dt_inicio_upd, dt_fim_upd, desc_upd)
+                        # (ALTERADO AGORA) Repassando o valor do checkbox (True/False) para o backend
+                        sucesso, mensagem = executar_extracao(dt_inicio_upd, dt_fim_upd, desc_upd, is_checkpoint)
                         if sucesso:
                             st.success(f"✅ Dados atualizados!")
                             st.cache_data.clear()
                         else: st.error(f"❌ Falha: {mensagem}")
         else: st.warning("Nenhuma Sprint cadastrada para atualizar.")
-
 
 # ==========================================
 # ABA 1: O DASHBOARD (Visão da Sprint)
@@ -266,6 +274,26 @@ with aba_dashboard:
                 colA.metric("Total de Itens", total_itens)
                 colB.metric("Sustentação", itens_sust, f"{(itens_sust/total_itens*100):.1f}%" if total_itens > 0 else "0%")
                 colC.metric("Desenvolvimento", itens_desv, f"{(itens_desv/total_itens*100):.1f}%" if total_itens > 0 else "0%")
+
+            
+            with st.expander("📊 Histórico de itens da Sprint (Planning vs Checkpoint vs Final)", expanded=False):
+                row_sprint = df_sprints[df_sprints['id'] == id_sprint_selecionada].iloc[0]
+                
+                col_sn1, col_sn2, col_sn3 = st.columns(3)
+                
+                col_sn1.markdown("**Planning (Dia 1)**")
+                col_sn1.metric("Total de Itens", f"{row_sprint['ini_total']:.0f}")
+                col_sn1.write(f"🔧 Sust: {row_sprint['ini_sust']:.0f} | 💻 Desv: {row_sprint['ini_desv']:.0f}")
+                
+                col_sn2.markdown("**Checkpoint**")
+                delta_chk = row_sprint['chk_total'] - row_sprint['ini_total']
+                col_sn2.metric("Total de Itens", f"{row_sprint['chk_total']:.0f}", delta=f"{delta_chk:.0f} itens", delta_color="inverse")
+                col_sn2.write(f"🔧 Sust: {row_sprint['chk_sust']:.0f} | 💻 Desv: {row_sprint['chk_desv']:.0f}")
+                
+                col_sn3.markdown("**Final (Encerramento)**")
+                delta_fin = row_sprint['fin_total'] - row_sprint['chk_total']
+                col_sn3.metric("Total de Itens", f"{row_sprint['fin_total']:.0f}", delta=f"{delta_fin:.0f} itens", delta_color="inverse")
+                col_sn3.write(f"🔧 Sust: {row_sprint['fin_sust']:.0f} | 💻 Desv: {row_sprint['fin_desv']:.0f}")
 
             col_eq1, col_eq2 = st.columns(2)
 

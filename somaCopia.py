@@ -112,7 +112,6 @@ def obter_dados_projeto(projeto):
 
     return dados
 
-# Hardcode de analistas mantido para a v1 (ALTERADO AGORA)
 ANALISTAS = ["Fernando", "Anderson", "Gustavo", "Nathan"]
 
 def extrair_e_salvar_backlog(projeto, sprint_id):
@@ -161,7 +160,7 @@ def extrair_e_salvar_backlog(projeto, sprint_id):
             data_criacao = data_criacao_raw[:10] if data_criacao_raw else "2000-01-01"
 
             dados_backlog.append({
-                "ID_SPRINT": sprint_id, # (ALTERADO AGORA) Nomenclatura DDS
+                "ID_SPRINT": sprint_id, 
                 "ISSUE_KEY": key,
                 "PROJETO": projeto,
                 "RESPONSAVEL": dev_nome,
@@ -176,7 +175,6 @@ def extrair_e_salvar_backlog(projeto, sprint_id):
         next_token = data_json.get("nextPageToken")
         if not next_token: break
 
-    # Gravação no MySQL usando ON DUPLICATE KEY UPDATE (ALTERADO AGORA)
     if dados_backlog:
         try:
             query = text("""
@@ -195,7 +193,6 @@ def extrair_e_salvar_backlog(projeto, sprint_id):
         except Exception as e:
             print(f"❌ Erro ao salvar backlog no MySQL: {e}")
 
-# Função renomeada e adaptada para MySQL (ALTERADO AGORA)
 def sincronizar_com_banco(dados_extracao, projeto_nome, sprint_id):
     if not dados_extracao: return
     payload = []
@@ -229,7 +226,6 @@ def sincronizar_com_banco(dados_extracao, projeto_nome, sprint_id):
     except Exception as e:
         print(f"Erro na sincronização de detalhes: {e}")
 
-# Função adaptada para ler e gravar no MySQL (ALTERADO AGORA)
 def obter_ou_criar_sprint(inicio, fim, descricao):
     dt_inicio = inicio.date() if isinstance(inicio, datetime) else inicio
     dt_fim = fim.date() if isinstance(fim, datetime) else fim
@@ -241,12 +237,10 @@ def obter_ou_criar_sprint(inicio, fim, descricao):
     fim_str = dt_fim.strftime("%Y-%m-%d")
     nome_sprint = f"Sprint {dt_inicio.strftime('%d/%m')} a {dt_fim.strftime('%d/%m')}"
 
-    # Busca no MySQL e transforma em lista de dicts para manter a lógica original (ALTERADO AGORA)
     df_sprints = conn.query("SELECT * FROM TB_SPRINT ORDER BY DATA_FIM DESC")
     sprints_existentes = df_sprints.to_dict('records')
 
     for sp in sprints_existentes:
-        # Tratamento de data caso o pandas converta para objeto Date (ALTERADO AGORA)
         sp_inicio_str = sp['DATA_INICIO'].strftime("%Y-%m-%d") if not isinstance(sp['DATA_INICIO'], str) else sp['DATA_INICIO']
         sp_fim_str = sp['DATA_FIM'].strftime("%Y-%m-%d") if not isinstance(sp['DATA_FIM'], str) else sp['DATA_FIM']
 
@@ -260,7 +254,6 @@ def obter_ou_criar_sprint(inicio, fim, descricao):
         if dt_inicio <= sp_fim and dt_fim >= sp_inicio:
             return None, f"Sobreposição detectada com a {sp['NOME_SPRINT']}."
 
-    # Grava a nova Sprint e captura o ID gerado pelo AUTO_INCREMENT (ALTERADO AGORA)
     nova_sprint = {"nome": nome_sprint, "inicio": inicio_str, "fim": fim_str, "descricao": descricao}
     try:
         with conn.session as s:
@@ -269,12 +262,12 @@ def obter_ou_criar_sprint(inicio, fim, descricao):
                 VALUES (:nome, :inicio, :fim, :descricao)
             """), nova_sprint)
             s.commit()
-            novo_id = result.lastrowid # Pega o ID_SPRINT que o MySQL acabou de criar
+            novo_id = result.lastrowid 
         return novo_id, "Nova Sprint cadastrada com sucesso no banco!"
     except Exception as e:
         return None, f"Erro ao criar Sprint no banco: {e}"
 
-def executar_extracao(data_inicio_input, data_fim_input, descricao_input):
+def executar_extracao(data_inicio_input, data_fim_input, descricao_input, is_checkpoint=False):
     global periodos
     
     inicio = datetime.combine(data_inicio_input, datetime.min.time()).replace(tzinfo=timezone.utc)
@@ -286,9 +279,11 @@ def executar_extracao(data_inicio_input, data_fim_input, descricao_input):
     if not id_sprint:
         return False, msg_validacao 
         
+    is_nova_sprint = "Nova Sprint cadastrada" in msg_validacao 
+        
     try:
         dados_star_pontos = obter_dados_projeto("STAR")
-        sincronizar_com_banco(dados_star_pontos, "STAR", id_sprint) # (ALTERADO AGORA)
+        sincronizar_com_banco(dados_star_pontos, "STAR", id_sprint)
         
         hoje = datetime.now(timezone.utc)
         
@@ -298,6 +293,37 @@ def executar_extracao(data_inicio_input, data_fim_input, descricao_input):
         else:
             status_backlog = "Apenas pontos atualizados (Snapshot do Backlog preservado, pois a sprint já foi encerrada)."
             print(f"🔒 Sprint encerrada em {fim.strftime('%d/%m/%Y')}. Snapshot do backlog preservado.")
+        
+
+        # ==========================================
+        # (ALTERADO AGORA) LÓGICA DE SNAPSHOT (FILA DE PENDENTES)
+        # ==========================================
+        tipos_sust = ['erro', 'atendimento', 'retorno negativo (rn)']
+        
+        query_bk = text("SELECT TIPO_ITEM FROM TB_SPRINT_BACKLOG WHERE ID_SPRINT = :id")
+        
+        with conn.session as s:
+            itens_bk = s.execute(query_bk, {"id": id_sprint}).fetchall()
+            
+        todos_itens = [item[0].lower() if item[0] else "" for item in itens_bk]
+        
+        total_sust = sum(1 for item in todos_itens if item in tipos_sust)
+        total_desv = len(todos_itens) - total_sust
+        total_geral = len(todos_itens)
+        
+        with conn.session as s:
+            if is_nova_sprint:
+                s.execute(text("UPDATE TB_SPRINT SET INI_TOTAL=:t, INI_SUST=:s, INI_DESV=:d WHERE ID_SPRINT=:id"), 
+                          {"t": total_geral, "s": total_sust, "d": total_desv, "id": id_sprint})
+            
+            elif is_checkpoint:
+                s.execute(text("UPDATE TB_SPRINT SET CHK_TOTAL=:t, CHK_SUST=:s, CHK_DESV=:d WHERE ID_SPRINT=:id"), 
+                          {"t": total_geral, "s": total_sust, "d": total_desv, "id": id_sprint})
+                
+            elif hoje.date() >= fim.date():
+                s.execute(text("UPDATE TB_SPRINT SET FIN_TOTAL=:t, FIN_SUST=:s, FIN_DESV=:d WHERE ID_SPRINT=:id"), 
+                          {"t": total_geral, "s": total_sust, "d": total_desv, "id": id_sprint})
+            s.commit()
         
         return True, f"{msg_validacao} {status_backlog}"
         
