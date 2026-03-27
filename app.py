@@ -23,7 +23,6 @@ with col_logo:
 
 # ==========================================
 # CARREGAMENTO GLOBAL DOS DADOS 
-# Usando st.connection e aliasing para não quebrar o frontend
 # ==========================================
 @st.cache_data(ttl=600)
 def carregar_issues():
@@ -44,7 +43,8 @@ def carregar_sprints():
                TEMPO_REUNIAO_MIN as tempo_reuniao_min, DESCRICAO as descricao,
                INI_TOTAL as ini_total, INI_SUST as ini_sust, INI_DESV as ini_desv,
                CHK_TOTAL as chk_total, CHK_SUST as chk_sust, CHK_DESV as chk_desv,
-               FIN_TOTAL as fin_total, FIN_SUST as fin_sust, FIN_DESV as fin_desv
+               FIN_TOTAL as fin_total, FIN_SUST as fin_sust, FIN_DESV as fin_desv,
+               ULTIMA_ATUALIZACAO as ultima_atualizacao
         FROM TB_SPRINT 
         ORDER BY DATA_INICIO DESC
     """
@@ -269,19 +269,35 @@ with aba_dashboard:
             daniel = obter_qtd("Daniel")
 
             with st.container(border=True):
-                st.markdown("#### 📌 Marcadores Principais (Jira)")
+               
+                c_tit, c_lbl = st.columns([3, 1])
+                c_tit.markdown("#### 📌 Marcadores Principais (Jira)")
+                
+                row_sprint_atual = df_sprints[df_sprints['id'] == id_sprint_selecionada].iloc[0]
+                dt_ult = row_sprint_atual.get('ultima_atualizacao')
+                
+                if pd.notnull(dt_ult):
+                    dt_obj = pd.to_datetime(dt_ult)
+                    
+                  
+                    dt_obj = dt_obj - pd.Timedelta(hours=3)
+                    
+                    dt_str = dt_obj.strftime("%d/%m/%Y às %H:%M")
+                    c_lbl.markdown(f"<div style='text-align: right; color: #888; font-size: 0.85em; margin-top: 10px; font-weight: 500;'>🔄 Última Sincronização: {dt_str}</div>", unsafe_allow_html=True)
+                else:
+                    c_lbl.markdown("<div style='text-align: right; color: #888; font-size: 0.85em; margin-top: 10px; font-weight: 500;'>🔄 Sincronização pendente</div>", unsafe_allow_html=True)
+                
                 colA, colB, colC = st.columns(3)
                 colA.metric("Total de Itens", total_itens)
                 colB.metric("Sustentação", itens_sust, f"{(itens_sust/total_itens*100):.1f}%" if total_itens > 0 else "0%")
                 colC.metric("Desenvolvimento", itens_desv, f"{(itens_desv/total_itens*100):.1f}%" if total_itens > 0 else "0%")
-
             
             with st.expander("📊 Histórico de itens da Sprint (Planning vs Checkpoint vs Final)", expanded=False):
                 row_sprint = df_sprints[df_sprints['id'] == id_sprint_selecionada].iloc[0]
                 
                 col_sn1, col_sn2, col_sn3 = st.columns(3)
                 
-                col_sn1.markdown("**Planning (Dia 1)**")
+                col_sn1.markdown("**Planning (Planning Inicio)**")
                 col_sn1.metric("Total de Itens", f"{row_sprint['ini_total']:.0f}")
                 col_sn1.write(f"🔧 Sust: {row_sprint['ini_sust']:.0f} | 💻 Desv: {row_sprint['ini_desv']:.0f}")
                 

@@ -296,7 +296,7 @@ def executar_extracao(data_inicio_input, data_fim_input, descricao_input, is_che
         
 
         # ==========================================
-        # (ALTERADO AGORA) LÓGICA DE SNAPSHOT (FILA DE PENDENTES)
+        #  LÓGICA DE SNAPSHOT (FILA DE PENDENTES)
         # ==========================================
         tipos_sust = ['erro', 'atendimento', 'retorno negativo (rn)']
         
@@ -323,6 +323,10 @@ def executar_extracao(data_inicio_input, data_fim_input, descricao_input, is_che
             elif hoje.date() >= fim.date():
                 s.execute(text("UPDATE TB_SPRINT SET FIN_TOTAL=:t, FIN_SUST=:s, FIN_DESV=:d WHERE ID_SPRINT=:id"), 
                           {"t": total_geral, "s": total_sust, "d": total_desv, "id": id_sprint})
+            
+            
+            s.execute(text("UPDATE TB_SPRINT SET ULTIMA_ATUALIZACAO = CURRENT_TIMESTAMP() WHERE ID_SPRINT=:id"), {"id": id_sprint})
+            
             s.commit()
         
         return True, f"{msg_validacao} {status_backlog}"

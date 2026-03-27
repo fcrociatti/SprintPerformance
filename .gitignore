@@ -2,3 +2,4 @@
 !.streamlit/config.toml
 google_credentials.json
 __pycache__/
+db
