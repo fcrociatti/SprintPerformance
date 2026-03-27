@@ -307,14 +307,13 @@ with aba_dashboard:
                     df_outros = df_backlog_filtrado[~df_backlog_filtrado['responsavel'].str.contains('|'.join(nomes_principais), case=False, na=False)]
                     todos_os_outros = len(df_outros)
 
-                    c1, c2, c3, c4 = st.columns(4)
+                    c1, c2, c3,  = st.columns(3)
                     c1.metric("Sérgio", sergio)
                     c2.metric("Eder", eder)
                     c3.metric("Daniel", daniel)
-                    c4.metric("Outros", todos_os_outros)
 
                     st.markdown("<br>", unsafe_allow_html=True)
-                    df_gest_donut = pd.DataFrame({'categoria': ["Sérgio", "Eder", "Daniel", "Todos os Outros"],'quantidade': [sergio, eder, daniel, todos_os_outros]})
+                    df_gest_donut = pd.DataFrame({'categoria': ["Sérgio", "Eder", "Daniel"],'quantidade': [sergio, eder, daniel]})
                     df_gest_donut = df_gest_donut[df_gest_donut['quantidade'] > 0]
                     
                     if not df_gest_donut.empty:
