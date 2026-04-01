@@ -95,9 +95,10 @@ def obter_dados_projeto(projeto):
             resumo = issue["fields"].get("summary", "Sem resumo")
             cliente_nome = extrair_cliente(issue["fields"])
                 
+            
             dados.append({
                 "Key": key, 
-                "Data_Transicao": data_transicao.strftime("%Y-%m-%d %H:%M:%S"), # (ALTERADO AGORA) Formato MySQL
+                "Data_Transicao": data_transicao.strftime("%Y-%m-%d %H:%M:%S"), 
                 "Responsável": dev,
                 "Tipo": tipo_item_nome, 
                 "Pontos_Sustentacao": pontos_sustentacao, 
@@ -106,6 +107,45 @@ def obter_dados_projeto(projeto):
                 "Cliente": cliente_nome
             })
 
+            data_iso = periodo_inicio.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "+0000"
+
+            campo_data_existente = issue["fields"].get(CUSTOM_DATE_FIELD)
+            precisa_atualizar = False
+
+            if campo_data_existente is None:
+                precisa_atualizar = True
+            else:
+                data_existente_str = campo_data_existente.split("T")[0]
+                data_esperada_str = periodo_inicio.strftime("%Y-%m-%d")
+                if data_existente_str != data_esperada_str:
+                    precisa_atualizar = True
+
+            if precisa_atualizar:
+                payload = {
+                    "fields": {
+                        CUSTOM_DATE_FIELD: data_iso
+                    }
+                }
+                update_resp = requests.put(
+                    f"{JIRA_URL}/rest/api/3/issue/{key}",
+                    headers=headers,
+                    auth=auth,
+                    json=payload
+                )
+
+                if 'logs_jira' not in st.session_state:
+                    st.session_state['logs_jira'] = []
+
+                if update_resp.status_code == 204:
+                    msg = (f"✅ Jira Atualizado: Issue {key} recebeu a data {data_iso}")
+                    print(msg)
+                    st.session_state['logs_jira'].append(msg)
+                else:
+                    
+                    msg = (f"❌ Falha ao atualizar Jira ({key}): {update_resp.text}")
+                    print(msg)
+                    st.session_state['logs_jira'].append(msg)
+
         if data_json.get("isLast") or not data_json.get("issues", []): break
         next_token = data_json.get("nextPageToken")
         if not next_token: break
@@ -113,6 +153,41 @@ def obter_dados_projeto(projeto):
     return dados
 
 ANALISTAS = ["Fernando", "Anderson", "Gustavo", "Nathan"]
+
+def limpar_snapshot_sprint(id_sprint, fase):
+    """
+    Apaga os registros de snapshot de uma fase específica ou de todas.
+    'fase' pode ser: 'INICIO', 'CHECKPOINT', 'FINAL' ou 'TODAS'
+    """
+    try:
+        with conn.session as s:
+            if fase == "INICIO":
+                query = text("UPDATE TB_SPRINT SET INI_TOTAL=NULL, INI_SUST=NULL, INI_DESV=NULL WHERE ID_SPRINT=:id")
+            elif fase == "CHECKPOINT":
+                query = text("UPDATE TB_SPRINT SET CHK_TOTAL=NULL, CHK_SUST=NULL, CHK_DESV=NULL WHERE ID_SPRINT=:id")
+            elif fase == "FINAL":
+                query = text("UPDATE TB_SPRINT SET FIN_TOTAL=NULL, FIN_SUST=NULL, FIN_DESV=NULL WHERE ID_SPRINT=:id")
+            elif fase == "TODAS":
+                query = text("""
+                    UPDATE TB_SPRINT 
+                    SET INI_TOTAL=NULL, INI_SUST=NULL, INI_DESV=NULL,
+                        CHK_TOTAL=NULL, CHK_SUST=NULL, CHK_DESV=NULL,
+                        FIN_TOTAL=NULL, FIN_SUST=NULL, FIN_DESV=NULL
+                    WHERE ID_SPRINT=:id
+                """)
+            else:
+                return False, "Fase inválida selecionada."
+            
+            s.execute(query, {"id": id_sprint})
+            
+            s.execute(text("UPDATE TB_SPRINT SET ULTIMA_ATUALIZACAO = NOW() WHERE ID_SPRINT=:id"), {"id": id_sprint})
+            
+            s.commit()
+            
+        return True, f"✅ Snapshot de {fase} apagado com sucesso! Você já pode gerar um novo."
+    except Exception as e:
+        return False, f"❌ Erro ao limpar o banco de dados: {e}"
+
 
 def extrair_e_salvar_backlog(projeto, sprint_id):
     dados_backlog = []
@@ -175,21 +250,28 @@ def extrair_e_salvar_backlog(projeto, sprint_id):
         next_token = data_json.get("nextPageToken")
         if not next_token: break
 
+
+
     if dados_backlog:
         try:
+    
+            with conn.session as s:
+                s.execute(text("DELETE FROM TB_SPRINT_BACKLOG WHERE ID_SPRINT = :id"), {"id": sprint_id})
+                s.commit()
+            
+        
             query = text("""
                 INSERT INTO TB_SPRINT_BACKLOG 
                 (ID_SPRINT, ISSUE_KEY, PROJETO, RESPONSAVEL, PAPEL, TIPO_ITEM, RESUMO, CLIENTE, DATA_CRIACAO)
                 VALUES 
                 (:ID_SPRINT, :ISSUE_KEY, :PROJETO, :RESPONSAVEL, :PAPEL, :TIPO_ITEM, :RESUMO, :CLIENTE, :DATA_CRIACAO)
-                ON DUPLICATE KEY UPDATE 
-                RESPONSAVEL = VALUES(RESPONSAVEL), PAPEL = VALUES(PAPEL), 
-                TIPO_ITEM = VALUES(TIPO_ITEM), RESUMO = VALUES(RESUMO), CLIENTE = VALUES(CLIENTE)
             """)
             with conn.session as s:
                 s.execute(query, dados_backlog)
                 s.commit()
+                
             print(f"✅ Backlog da Sprint ({len(dados_backlog)} itens) salvo no MySQL!")
+            
         except Exception as e:
             print(f"❌ Erro ao salvar backlog no MySQL: {e}")
 
@@ -268,6 +350,8 @@ def obter_ou_criar_sprint(inicio, fim, descricao):
         return None, f"Erro ao criar Sprint no banco: {e}"
 
 def executar_extracao(data_inicio_input, data_fim_input, descricao_input, is_checkpoint=False):
+    st.session_state['logs_jira'] = []
+    
     global periodos
     
     inicio = datetime.combine(data_inicio_input, datetime.min.time()).replace(tzinfo=timezone.utc)

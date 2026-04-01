@@ -2,7 +2,8 @@ import streamlit as st
 import pandas as pd
 import altair as alt
 from datetime import timedelta, datetime
-from somaCopia import executar_extracao 
+from somaCopia import executar_extracao
+from somaCopia import limpar_snapshot_sprint 
 import os
 
 st.set_page_config(page_title="Sprint Performance - DDS", layout="wide")
@@ -15,10 +16,12 @@ with col_titulo:
     st.title("📊 Sprint Performance - DDS")
 
 with col_logo:
+    
     caminho_logo = "assets/logo.png" 
     if os.path.exists(caminho_logo):
         st.write("") 
         st.image(caminho_logo, use_container_width=True)
+        
 
 
 # ==========================================
@@ -119,35 +122,54 @@ with aba_historico:
                 
                 st.markdown("---")
                 
-                col_graf_evo, col_graf_rank = st.columns([3, 2])
                 
-                with col_graf_evo:
-                    st.write("**📈 Evolução de Pontos por Sprint**")
-                    df_linha = df_hist.groupby(['descricao', 'data_inicio', 'responsavel'])['pontos'].sum().reset_index()
-                    ordem_cronologica = df_linha.sort_values('data_inicio')['descricao'].unique().tolist()
+               
+                st.write("**📊 Evolução de Entregas por Desenvolvedor**")
                     
-                    grafico_linha = alt.Chart(df_linha).mark_line(point=True, strokeWidth=3).encode(
-                        x=alt.X('descricao:N', sort=ordem_cronologica, title='Sprints', axis=alt.Axis(labelAngle=0)),
-                        y=alt.Y('pontos:Q', title='Pontos Entregues'),
-                        color=alt.Color('responsavel:N', title='Desenvolvedor', scale=alt.Scale(scheme='category20')),
-                        tooltip=['responsavel', 'descricao', 'pontos']
-                    ).properties(height=350)
+                    # Agrupa os dados
+                df_agrupado_hist = df_hist.groupby(['descricao', 'data_inicio', 'responsavel'])['pontos'].sum().reset_index()
                     
-                    st.altair_chart(grafico_linha, use_container_width=True, theme="streamlit")
+                    # Mantém a ordem cronológica para as Sprints não ficarem bagunçadas
+                ordem_cronologica = df_agrupado_hist.sort_values('data_inicio')['descricao'].unique().tolist()
+                    
+                if not df_agrupado_hist.empty:
+                        barras_desempenho = alt.Chart(df_agrupado_hist).mark_bar(cornerRadiusTopLeft=3, cornerRadiusTopRight=3).encode(
+                            # Eixo X principal agora é o DESENVOLVEDOR
+                            x=alt.X('responsavel:N', title='Desenvolvedor', axis=alt.Axis(labelAngle=0)),
+                            
+                            # Eixo Y (A métrica de entrega)
+                            y=alt.Y('pontos:Q', title='Pontos Entregues'),
+                            
+                            # O xOffset agora agrupa as SPRINTS dentro do bloco de cada Desenvolvedor
+                            xOffset=alt.XOffset('descricao:N', sort=ordem_cronologica),
+                            
+                            # Colore cada barra de acordo com a Sprint (respeitando a ordem de tempo)
+                            color=alt.Color('descricao:N', title='Sprint', sort=ordem_cronologica, scale=alt.Scale(scheme='tableau10')),
+                            
+                            # Tooltip para quando passar o mouse
+                            tooltip=[
+                                alt.Tooltip('responsavel:N', title='Desenvolvedor'),
+                                alt.Tooltip('descricao:N', title='Sprint'),
+                                alt.Tooltip('pontos:Q', title='Pontos Entregues')
+                            ]
+                        ).properties(height=350)
+                        
+                        st.altair_chart(barras_desempenho, use_container_width=True, theme="streamlit")
+                else:
+                        st.info("Nenhum dado encontrado para gerar o gráfico histórico.")
                 
-                with col_graf_rank:
-                    st.write("**🏆 Ranking Acumulado no Período**")
-                    df_rank_hist = df_hist.groupby('responsavel')['pontos'].sum().reset_index()
-                    df_rank_hist = df_rank_hist[df_rank_hist['pontos'] > 0].sort_values(by='pontos', ascending=False)
+                st.write("**🏆 Ranking Acumulado no Período**")
+                df_rank_hist = df_hist.groupby('responsavel')['pontos'].sum().reset_index()
+                df_rank_hist = df_rank_hist[df_rank_hist['pontos'] > 0].sort_values(by='pontos', ascending=False)
                     
-                    grafico_barras_hist = alt.Chart(df_rank_hist).mark_bar().encode(
+                grafico_barras_hist = alt.Chart(df_rank_hist).mark_bar().encode(
                         x=alt.X('pontos:Q', title='Total de Pontos', axis=alt.Axis(grid=False)),
                         y=alt.Y('responsavel:N', sort='-x', title=''),
                         color=alt.Color('responsavel:N', legend=None, scale=alt.Scale(scheme='category20')),
                         tooltip=['responsavel', 'pontos']
                     )
-                    textos_hist = grafico_barras_hist.mark_text(align='left', baseline='middle', dx=5, color='white', fontWeight='bold').encode(text='pontos:Q')
-                    st.altair_chart((grafico_barras_hist + textos_hist).properties(height=350), use_container_width=True, theme="streamlit")
+                textos_hist = grafico_barras_hist.mark_text(align='left', baseline='middle', dx=5, color='white', fontWeight='bold').encode(text='pontos:Q')
+                st.altair_chart((grafico_barras_hist + textos_hist).properties(height=350), use_container_width=True, theme="streamlit")
                     
             else:
                 st.info("Nenhum dado encontrado para os filtros selecionados.")
@@ -216,13 +238,44 @@ with aba_sincronizacao:
                     dt_fim_upd = row_sprint['data_fim'] if not isinstance(row_sprint['data_fim'], str) else datetime.strptime(row_sprint['data_fim'], "%Y-%m-%d").date()
                     desc_upd = row_sprint['descricao']
                     with st.spinner(f"Atualizando dados da {sprint_para_atualizar}..."):
-                        # (ALTERADO AGORA) Repassando o valor do checkbox (True/False) para o backend
                         sucesso, mensagem = executar_extracao(dt_inicio_upd, dt_fim_upd, desc_upd, is_checkpoint)
                         if sucesso:
                             st.success(f"✅ Dados atualizados!")
                             st.cache_data.clear()
                         else: st.error(f"❌ Falha: {mensagem}")
         else: st.warning("Nenhuma Sprint cadastrada para atualizar.")
+
+       
+        if 'logs_jira' in st.session_state and len(st.session_state['logs_jira']) > 0:
+            st.markdown("<br>", unsafe_allow_html=True)
+            with st.expander("📋 Ver detalhamento de tarefas atualizadas no Jira", expanded=True):
+                st.info("O sistema preencheu automaticamente a 'Data de Contagem de Pontos' para as seguintes entregas:")
+                for log in st.session_state['logs_jira']:
+                    st.write(log)
+
+        st.divider()
+        st.markdown("### ⚠️ Correção de Dados")
+        with st.expander("🛠️ Apagar Snapshots (Em caso de erro)"):
+            st.warning("Use esta área apenas se um snapshot foi tirado na data errada ou com dados incompletos. Isso apagará a foto histórica do banco de dados, permitindo que você tire uma nova.")
+            
+            sprint_para_limpar = st.selectbox("Selecione a Sprint para corrigir:", df_sprints['nome_sprint'], key="limpar_sprint")
+            id_sprint_limpar = int(df_sprints[df_sprints['nome_sprint'] == sprint_para_limpar].iloc[0]['id'])
+            
+            fase_para_limpar = st.selectbox(
+                "Qual momento você deseja apagar?",
+                ["INICIO", "CHECKPOINT", "FINAL", "TODAS"],
+                help="Escolha qual 'foto' da sprint será apagada."
+            )
+            
+            if st.button(f"🗑️ Apagar dados de {fase_para_limpar} da {sprint_para_limpar}", type="primary"):
+                with st.spinner("Apagando registros no banco de dados..."):
+                    sucesso, msg_limpeza = limpar_snapshot_sprint(id_sprint_limpar, fase_para_limpar)
+                    if sucesso:
+                        st.success(msg_limpeza)
+                        st.cache_data.clear()
+                        st.rerun() 
+                    else:
+                        st.error(msg_limpeza)
 
 # ==========================================
 # ABA 1: O DASHBOARD (Visão da Sprint)
@@ -341,6 +394,34 @@ with aba_dashboard:
                         )
                         text_donut = base_donut.mark_text(radius=120, color='white').encode(text="quantidade:Q", order=alt.Order("quantidade:Q", sort="descending"))
                         st.altair_chart((donut + text_donut).properties(height=250), use_container_width=True, theme="streamlit")
+
+                        with st.expander("📋 Detalhes de itens da Gestão"):
+                            gestor_selecionado = st.selectbox(
+                                "Filtrar tarefas de:", 
+                                [ "Todos da Equipe","Sergio", "Eder", "Daniel"],
+                                label_visibility="collapsed" 
+                            )
+                            
+                            if gestor_selecionado == "Todos da Equipe":
+                                df_detalhe = df_backlog_filtrado[df_backlog_filtrado['responsavel'].str.contains("Sergio|Eder|Daniel", case=False, na=False)].copy()
+                            else:
+                                df_detalhe = df_backlog_filtrado[df_backlog_filtrado['responsavel'].str.contains(gestor_selecionado, case=False, na=False)].copy()
+                            
+                            if not df_detalhe.empty:
+                                df_detalhe['link'] = "https://ddsinfo.atlassian.net/browse/" + df_detalhe['issue_key']
+                                st.dataframe(
+                                    df_detalhe[['issue_key', 'responsavel', 'tipo_item', 'link']], 
+                                    hide_index=True,
+                                    use_container_width=True,
+                                    column_config={
+                                        "issue_key": "Chave",
+                                        "responsavel": "Analista",
+                                        "tipo_item": "Tipo",
+                                        "link": st.column_config.LinkColumn("Jira")
+                                    }
+                                )
+                            else:
+                                st.warning("Nenhuma tarefa pendente para este filtro.")
                     else: st.info("Sem dados de gestão.")
 
             with col_eq2:
@@ -357,7 +438,8 @@ with aba_dashboard:
 
                     st.markdown("<br>", unsafe_allow_html=True)
                     df_an_comp = pd.DataFrame({'responsavel': ["Anderson", "Fernando", "Gustavo", "Nathan"],'quantidade': [anderson, fernando, gustavo, nathan]})
-                    if not df_an_comp.empty:
+                    
+                    if not df_an_comp.empty and df_an_comp['quantidade'].sum() > 0:
                         bar_comp = alt.Chart(df_an_comp).mark_bar(color="#37a0d2").encode(
                             x=alt.X('quantidade:Q', title='Qtd de Itens', axis=alt.Axis(grid=False)),
                             y=alt.Y('responsavel:N', sort='-x', title=''),
@@ -365,8 +447,37 @@ with aba_dashboard:
                         )
                         label_comp = bar_comp.mark_text(align='left', baseline='middle', dx=5, color='white').encode(text='quantidade:Q')
                         st.altair_chart((bar_comp + label_comp).properties(height=200), use_container_width=True, theme="streamlit")
+                        
+                       
+                        with st.expander("📋 Detalhes de itens da Equipe de Análise"):
+                            analista_selecionado = st.selectbox(
+                                "Filtrar tarefas de:", 
+                                ["Todos da Equipe", "Anderson", "Fernando", "Gustavo", "Nathan"],
+                                label_visibility="collapsed" 
+                            )
+                            
+                            if analista_selecionado == "Todos da Equipe":
+                                df_detalhe = df_backlog_filtrado[df_backlog_filtrado['responsavel'].str.contains("Anderson|Fernando|Gustavo|Nathan", case=False, na=False)].copy()
+                            else:
+                                df_detalhe = df_backlog_filtrado[df_backlog_filtrado['responsavel'].str.contains(analista_selecionado, case=False, na=False)].copy()
+                            
+                            if not df_detalhe.empty:
+                                df_detalhe['link'] = "https://ddsinfo.atlassian.net/browse/" + df_detalhe['issue_key']
+                                st.dataframe(
+                                    df_detalhe[['issue_key', 'responsavel', 'tipo_item', 'link']], 
+                                    hide_index=True,
+                                    use_container_width=True,
+                                    column_config={
+                                        "issue_key": "Chave",
+                                        "responsavel": "Analista",
+                                        "tipo_item": "Tipo",
+                                        "link": st.column_config.LinkColumn("Jira")
+                                    }
+                                )
+                            else:
+                                st.warning("Nenhuma tarefa pendente para este filtro.")
+                        
                     else: st.info("Sem dados de análise.")
-
             with st.expander("🔍 Ver outros colaboradores e lista completa do backlog"):
                 if todos_os_outros > 0:
                     st.write("**Resumo dos Outros Colaboradores:**")
