@@ -44,12 +44,21 @@ def carregar_sprints():
         SELECT ID_SPRINT as id, NOME_SPRINT as nome_sprint, DATA_INICIO as data_inicio, 
                DATA_FIM as data_fim, ITENS_INICIAIS as itens_iniciais, 
                TEMPO_REUNIAO_MIN as tempo_reuniao_min, DESCRICAO as descricao,
-               INI_TOTAL as ini_total, INI_SUST as ini_sust, INI_DESV as ini_desv,
-               CHK_TOTAL as chk_total, CHK_SUST as chk_sust, CHK_DESV as chk_desv,
-               FIN_TOTAL as fin_total, FIN_SUST as fin_sust, FIN_DESV as fin_desv,
                ULTIMA_ATUALIZACAO as ultima_atualizacao
         FROM TB_SPRINT 
         ORDER BY DATA_INICIO DESC
+    """
+    return conn.query(query)
+
+
+@st.cache_data(ttl=600)
+def carregar_snapshots():
+    query = """
+        SELECT ID_SNAPSHOT as id, ID_SPRINT as sprint_id, FASE as fase, 
+               DESCRICAO_CUSTOMIZADA as descricao, QTD_TOTAL as qtd_total, 
+               QTD_SUST as qtd_sust, QTD_DESV as qtd_desv, DATA_REGISTRO as data_registro
+        FROM TB_SPRINT_SNAPSHOT
+        ORDER BY DATA_REGISTRO ASC
     """
     return conn.query(query)
 
@@ -66,6 +75,7 @@ def carregar_backlog():
 
 df_issues = carregar_issues()
 df_sprints = carregar_sprints()
+df_snapshots = carregar_snapshots()
 df_backlog = carregar_backlog()
 
 if not df_sprints.empty:
@@ -191,6 +201,7 @@ with aba_historico:
     else:
         st.warning("É necessário cadastrar sprints e realizar buscas para visualizar o histórico.")
 
+
 # ==========================================
 # ABA 3: GERENCIAMENTO E SINCRONIZAÇÃO
 # ==========================================
@@ -199,6 +210,9 @@ with aba_sincronizacao:
     acao = st.radio("O que deseja fazer?", ["Cadastrar Nova Sprint", "Atualizar Sprint Existente"], horizontal=True)
     st.divider()
 
+    # ---------------------------------------------------------
+    # PARTE 1: CADASTRAR NOVA SPRINT (Onde entra o "INICIO")
+    # ---------------------------------------------------------
     if acao == "Cadastrar Nova Sprint":
         st.write("Defina a identificação e o intervalo da nova Sprint.")
         with st.form("form_sync_nova"):
@@ -206,6 +220,10 @@ with aba_sincronizacao:
             col1, col2 = st.columns(2)
             dt_inicio = col1.date_input("Data de Início da Sprint")
             dt_fim = col2.date_input("Data de Fim da Sprint", value=dt_inicio + timedelta(days=13))
+            
+            # NOVO CAMPO AQUI TAMBÉM
+            desc_snapshot_nova = st.text_input("Observação para o Log (Opcional):", placeholder="Ex: Carga inicial após a Planning")
+            
             btn_sincronizar = st.form_submit_button("🚀 Iniciar Busca no Jira")
             
             if btn_sincronizar:
@@ -222,20 +240,31 @@ with aba_sincronizacao:
                                 sobreposicao = True
                                 sprint_conflito = row['descricao']
                                 break
-                    if sobreposicao: st.error(f"❌ Sobreposição detetada com: **{sprint_conflito}**.")
+                    if sobreposicao: 
+                        st.error(f"❌ Sobreposição detetada com: **{sprint_conflito}**.")
                     else:
+                        desc_final_nova = desc_snapshot_nova.strip()
+                        if not desc_final_nova:
+                            desc_final_nova = "Abertura oficial da Sprint (Planning)"
+
                         with st.spinner('A conectar ao Jira...'):
-                            sucesso, mensagem = executar_extracao(dt_inicio, dt_fim, descricao_input, False) 
+                            sucesso, mensagem = executar_extracao(dt_inicio, dt_fim, descricao_input, "INICIO", desc_final_nova) 
                             if sucesso:
                                 st.success(f"✅ Dados importados!")
                                 st.cache_data.clear()
-                            else: st.error(f"❌ Falha: {mensagem}")
+                            else: 
+                                st.error(f"❌ Falha: {mensagem}")
 
+    # ---------------------------------------------------------
+    # PARTE 2: ATUALIZAR SPRINT (Onde entra o row_sprint e o Checkbox)
+    # ---------------------------------------------------------
     else:
         st.write("Busque os dados mais recentes de uma Sprint que já está no banco.")
         if not df_sprints.empty:
             sprint_para_atualizar = st.selectbox("Selecione a Sprint para Atualizar", df_sprints['nome_exibicao'].tolist())
+            
             row_sprint = df_sprints[df_sprints['nome_exibicao'] == sprint_para_atualizar].iloc[0]
+            
             with st.form("form_sync_atualiza"):
                 dt_ini_str = row_sprint['data_inicio'].strftime("%Y-%m-%d") if not isinstance(row_sprint['data_inicio'], str) else row_sprint['data_inicio']
                 dt_fim_str = row_sprint['data_fim'].strftime("%Y-%m-%d") if not isinstance(row_sprint['data_fim'], str) else row_sprint['data_fim']
@@ -243,7 +272,10 @@ with aba_sincronizacao:
                 st.info(f"O sistema irá consultar o Jira novamente para o período de **{dt_ini_str}** até **{dt_fim_str}**.")
                 
                 st.markdown("---")
+                
                 is_checkpoint = st.checkbox(" Registrar contagem como Checkpoint")
+                desc_snapshot = st.text_input("Observação para o Log (Opcional):", placeholder="Ex: Antes do refinamento da gestão")
+                
                 st.markdown("---")
 
                 btn_atualizar = st.form_submit_button("🔄 Atualizar Dados")
@@ -252,8 +284,28 @@ with aba_sincronizacao:
                     dt_inicio_upd = row_sprint['data_inicio'] if not isinstance(row_sprint['data_inicio'], str) else datetime.strptime(row_sprint['data_inicio'], "%Y-%m-%d").date()
                     dt_fim_upd = row_sprint['data_fim'] if not isinstance(row_sprint['data_fim'], str) else datetime.strptime(row_sprint['data_fim'], "%Y-%m-%d").date()
                     desc_upd = row_sprint['descricao']
+                    
+                    desc_final = desc_snapshot.strip()
+
+                    hoje_date = datetime.now().date()
+                    
+                    if is_checkpoint: 
+                        fase_calc = "CHECKPOINT"
+                        if not desc_final: 
+                            desc_final = "Registro oficial de Checkpoint"
+                            
+                    elif hoje_date >= dt_fim_upd: 
+                        fase_calc = "FINAL"
+                        if not desc_final:
+                            desc_final = "Encerramento oficial da Sprint"
+                            
+                    else: 
+                        fase_calc = "AVULSO"
+                        if not desc_final:
+                            desc_final = "Atualização de rotina"
+
                     with st.spinner(f"Atualizando dados da {sprint_para_atualizar}..."):
-                        sucesso, mensagem = executar_extracao(dt_inicio_upd, dt_fim_upd, desc_upd, is_checkpoint)
+                        sucesso, mensagem = executar_extracao(dt_inicio_upd, dt_fim_upd, desc_upd, fase_calc, desc_final)
                         if sucesso:
                             st.success(f"✅ Dados atualizados!")
                             st.cache_data.clear()
@@ -261,6 +313,9 @@ with aba_sincronizacao:
         else: st.warning("Nenhuma Sprint cadastrada para atualizar.")
 
        
+        # ---------------------------------------------------------
+        # PARTE 3: DETALHES DE ATUALIZAÇÃO E BORRACHA
+        # ---------------------------------------------------------
         if 'logs_jira' in st.session_state and len(st.session_state['logs_jira']) > 0:
             st.markdown("<br>", unsafe_allow_html=True)
             with st.expander("📋 Ver detalhamento de tarefas atualizadas no Jira", expanded=True):
@@ -270,8 +325,8 @@ with aba_sincronizacao:
 
         st.divider()
         st.markdown("### ⚠️ Correção de Dados")
-        with st.expander("🛠️ Apagar Snapshots (Em caso de erro)"):
-            st.warning("Use esta área apenas se um snapshot foi tirado na data errada ou com dados incompletos. Isso apagará a foto histórica do banco de dados, permitindo que você tire uma nova.")
+        with st.expander("Apagar Snapshots (Em caso de erro)"):
+            st.warning("Use esta área para apagar os grandes marcos da Sprint (Início, Checkpoint ou Final) caso tenham sido registrados na data errada.")
             
             sprint_para_limpar = st.selectbox("Selecione a Sprint para corrigir:", df_sprints['nome_sprint'], key="limpar_sprint")
             id_sprint_limpar = int(df_sprints[df_sprints['nome_sprint'] == sprint_para_limpar].iloc[0]['id'])
@@ -279,7 +334,7 @@ with aba_sincronizacao:
             fase_para_limpar = st.selectbox(
                 "Qual momento você deseja apagar?",
                 ["INICIO", "CHECKPOINT", "FINAL", "TODAS"],
-                help="Escolha qual 'foto' da sprint será apagada."
+                help="Escolha qual 'foto' principal da sprint será apagada."
             )
             
             if st.button(f"🗑️ Apagar dados de {fase_para_limpar} da {sprint_para_limpar}", type="primary"):
@@ -361,23 +416,59 @@ with aba_dashboard:
                 colC.metric("Desenvolvimento", itens_desv, f"{(itens_desv/total_itens*100):.1f}%" if total_itens > 0 else "0%")
             
             with st.expander("📊 Histórico de itens da Sprint (Planning vs Checkpoint vs Final)", expanded=False):
-                row_sprint = df_sprints[df_sprints['id'] == id_sprint_selecionada].iloc[0]
-                
+                ini_tot, ini_sus, ini_des = 0, 0, 0
+                chk_tot, chk_sus, chk_des = 0, 0, 0
+                fin_tot, fin_sus, fin_des = 0, 0, 0
+
+                if 'df_snapshots' in locals() and not df_snapshots.empty:
+                    snaps_sprint = df_snapshots[df_snapshots['sprint_id'] == id_sprint_selecionada]
+
+                    df_ini = snaps_sprint[snaps_sprint['fase'] == 'INICIO']
+                    if not df_ini.empty:
+                        last_ini = df_ini.iloc[-1]
+                        ini_tot, ini_sus, ini_des = last_ini['qtd_total'], last_ini['qtd_sust'], last_ini['qtd_desv']
+
+                    df_chk = snaps_sprint[snaps_sprint['fase'] == 'CHECKPOINT']
+                    if not df_chk.empty:
+                        last_chk = df_chk.iloc[-1]
+                        chk_tot, chk_sus, chk_des = last_chk['qtd_total'], last_chk['qtd_sust'], last_chk['qtd_desv']
+
+                    df_fin = snaps_sprint[snaps_sprint['fase'] == 'FINAL']
+                    if not df_fin.empty:
+                        last_fin = df_fin.iloc[-1]
+                        fin_tot, fin_sus, fin_des = last_fin['qtd_total'], last_fin['qtd_sust'], last_fin['qtd_desv']
+
+                # ==================================
+                # SEU LAYOUT ORIGINAL RESTAURADO
+                # ==================================
                 col_sn1, col_sn2, col_sn3 = st.columns(3)
                 
                 col_sn1.markdown("**Planning (Planning Inicio)**")
-                col_sn1.metric("Total de Itens", f"{row_sprint['ini_total']:.0f}")
-                col_sn1.write(f"🔧 Sust: {row_sprint['ini_sust']:.0f} | 💻 Desv: {row_sprint['ini_desv']:.0f}")
+                col_sn1.metric("Total de Itens", f"{ini_tot:.0f}")
+                col_sn1.write(f"🔧 Sust: {ini_sus:.0f} | 💻 Desv: {ini_des:.0f}")
                 
                 col_sn2.markdown("**Checkpoint**")
-                delta_chk = row_sprint['chk_total'] - row_sprint['ini_total']
-                col_sn2.metric("Total de Itens", f"{row_sprint['chk_total']:.0f}", delta=f"{delta_chk:.0f} itens", delta_color="inverse")
-                col_sn2.write(f"🔧 Sust: {row_sprint['chk_sust']:.0f} | 💻 Desv: {row_sprint['chk_desv']:.0f}")
+                delta_chk = chk_tot - ini_tot
+                col_sn2.metric("Total de Itens", f"{chk_tot:.0f}", delta=f"{delta_chk:.0f} itens", delta_color="inverse")
+                col_sn2.write(f"🔧 Sust: {chk_sus:.0f} | 💻 Desv: {chk_des:.0f}")
                 
                 col_sn3.markdown("**Final (Encerramento)**")
-                delta_fin = row_sprint['fin_total'] - row_sprint['chk_total']
-                col_sn3.metric("Total de Itens", f"{row_sprint['fin_total']:.0f}", delta=f"{delta_fin:.0f} itens", delta_color="inverse")
-                col_sn3.write(f"🔧 Sust: {row_sprint['fin_sust']:.0f} | 💻 Desv: {row_sprint['fin_desv']:.0f}")
+                delta_fin = fin_tot - chk_tot
+                col_sn3.metric("Total de Itens", f"{fin_tot:.0f}", delta=f"{delta_fin:.0f} itens", delta_color="inverse")
+                col_sn3.write(f"🔧 Sust: {fin_sus:.0f} | 💻 Desv: {fin_des:.0f}")
+
+                st.divider()
+
+                with st.expander("Detalhes das atualizações", expanded=False):
+                    if 'df_snapshots' in locals() and not df_snapshots.empty and not snaps_sprint.empty:
+                        snaps_exibicao = snaps_sprint.copy()
+                        snaps_exibicao['Data e Hora'] = (pd.to_datetime(snaps_exibicao['data_registro']) - pd.Timedelta(hours=3)).dt.strftime('%d/%m às %H:%M')
+                        snaps_exibicao = snaps_exibicao[['Data e Hora', 'fase', 'descricao', 'qtd_total', 'qtd_sust', 'qtd_desv']]
+                        snaps_exibicao.columns = ['Data e Hora', 'Fase', 'Observação', 'Total', 'Sust', 'Desv']
+                        st.dataframe(snaps_exibicao, use_container_width=True, hide_index=True)
+                    else:
+                        st.info("Nenhum log registrado.")
+                
 
             col_eq1, col_eq2 = st.columns(2)
 

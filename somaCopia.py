@@ -155,36 +155,17 @@ def obter_dados_projeto(projeto):
 ANALISTAS = ["Fernando", "Anderson", "Gustavo", "Nathan"]
 
 def limpar_snapshot_sprint(id_sprint, fase):
-    """
-    Apaga os registros de snapshot de uma fase específica ou de todas.
-    'fase' pode ser: 'INICIO', 'CHECKPOINT', 'FINAL' ou 'TODAS'
-    """
     try:
         with conn.session as s:
-            if fase == "INICIO":
-                query = text("UPDATE TB_SPRINT SET INI_TOTAL=NULL, INI_SUST=NULL, INI_DESV=NULL WHERE ID_SPRINT=:id")
-            elif fase == "CHECKPOINT":
-                query = text("UPDATE TB_SPRINT SET CHK_TOTAL=NULL, CHK_SUST=NULL, CHK_DESV=NULL WHERE ID_SPRINT=:id")
-            elif fase == "FINAL":
-                query = text("UPDATE TB_SPRINT SET FIN_TOTAL=NULL, FIN_SUST=NULL, FIN_DESV=NULL WHERE ID_SPRINT=:id")
-            elif fase == "TODAS":
-                query = text("""
-                    UPDATE TB_SPRINT 
-                    SET INI_TOTAL=NULL, INI_SUST=NULL, INI_DESV=NULL,
-                        CHK_TOTAL=NULL, CHK_SUST=NULL, CHK_DESV=NULL,
-                        FIN_TOTAL=NULL, FIN_SUST=NULL, FIN_DESV=NULL
-                    WHERE ID_SPRINT=:id
-                """)
+            if fase == "TODAS":
+                s.execute(text("DELETE FROM TB_SPRINT_SNAPSHOT WHERE ID_SPRINT=:id"), {"id": id_sprint})
             else:
-                return False, "Fase inválida selecionada."
-            
-            s.execute(query, {"id": id_sprint})
+                s.execute(text("DELETE FROM TB_SPRINT_SNAPSHOT WHERE ID_SPRINT=:id AND FASE=:fase"), {"id": id_sprint, "fase": fase})
             
             s.execute(text("UPDATE TB_SPRINT SET ULTIMA_ATUALIZACAO = NOW() WHERE ID_SPRINT=:id"), {"id": id_sprint})
-            
             s.commit()
             
-        return True, f"✅ Snapshot de {fase} apagado com sucesso! Você já pode gerar um novo."
+        return True, f"✅ Snapshot de {fase} apagado com sucesso!"
     except Exception as e:
         return False, f"❌ Erro ao limpar o banco de dados: {e}"
 
@@ -349,7 +330,8 @@ def obter_ou_criar_sprint(inicio, fim, descricao):
     except Exception as e:
         return None, f"Erro ao criar Sprint no banco: {e}"
 
-def executar_extracao(data_inicio_input, data_fim_input, descricao_input, is_checkpoint=False):
+
+def executar_extracao(data_inicio_input, data_fim_input, descricao_input, fase_snapshot="AVULSO", desc_snapshot=""):
     st.session_state['logs_jira'] = []
     
     global periodos
@@ -363,14 +345,13 @@ def executar_extracao(data_inicio_input, data_fim_input, descricao_input, is_che
     if not id_sprint:
         return False, msg_validacao 
         
-    is_nova_sprint = "Nova Sprint cadastrada" in msg_validacao 
-        
     try:
         dados_star_pontos = obter_dados_projeto("STAR")
         sincronizar_com_banco(dados_star_pontos, "STAR", id_sprint)
         
         hoje = datetime.now(timezone.utc)
         
+        # Só atualiza a 'foto' do Jira se a sprint ainda estiver ativa
         if fim >= hoje:
             extrair_e_salvar_backlog("STAR", id_sprint)
             status_backlog = "Pontos e Snapshot do Backlog atualizados."
@@ -378,38 +359,37 @@ def executar_extracao(data_inicio_input, data_fim_input, descricao_input, is_che
             status_backlog = "Apenas pontos atualizados (Snapshot do Backlog preservado, pois a sprint já foi encerrada)."
             print(f"🔒 Sprint encerrada em {fim.strftime('%d/%m/%Y')}. Snapshot do backlog preservado.")
         
-
-        # ==========================================
-        #  LÓGICA DE SNAPSHOT (FILA DE PENDENTES)
-        # ==========================================
         tipos_sust = ['erro', 'atendimento', 'retorno negativo (rn)']
         
-        query_bk = text("SELECT TIPO_ITEM FROM TB_SPRINT_BACKLOG WHERE ID_SPRINT = :id")
-        
+        # ==========================================
+        # SESSÃO ÚNICA DE BANCO DE DADOS (Mais seguro)
+        # ==========================================
         with conn.session as s:
+            query_bk = text("SELECT TIPO_ITEM FROM TB_SPRINT_BACKLOG WHERE ID_SPRINT = :id")
             itens_bk = s.execute(query_bk, {"id": id_sprint}).fetchall()
             
-        todos_itens = [item[0].lower() if item[0] else "" for item in itens_bk]
-        
-        total_sust = sum(1 for item in todos_itens if item in tipos_sust)
-        total_desv = len(todos_itens) - total_sust
-        total_geral = len(todos_itens)
-        
-        with conn.session as s:
-            if is_nova_sprint:
-                s.execute(text("UPDATE TB_SPRINT SET INI_TOTAL=:t, INI_SUST=:s, INI_DESV=:d WHERE ID_SPRINT=:id"), 
-                          {"t": total_geral, "s": total_sust, "d": total_desv, "id": id_sprint})
+            todos_itens = [item[0].lower() if item[0] else "" for item in itens_bk]
             
-            elif is_checkpoint:
-                s.execute(text("UPDATE TB_SPRINT SET CHK_TOTAL=:t, CHK_SUST=:s, CHK_DESV=:d WHERE ID_SPRINT=:id"), 
-                          {"t": total_geral, "s": total_sust, "d": total_desv, "id": id_sprint})
-                
-            elif hoje.date() >= fim.date():
-                s.execute(text("UPDATE TB_SPRINT SET FIN_TOTAL=:t, FIN_SUST=:s, FIN_DESV=:d WHERE ID_SPRINT=:id"), 
-                          {"t": total_geral, "s": total_sust, "d": total_desv, "id": id_sprint})
+            total_sust = sum(1 for item in todos_itens if item in tipos_sust)
+            total_desv = len(todos_itens) - total_sust
+            total_geral = len(todos_itens)
             
+            query_snap = text("""
+                INSERT INTO TB_SPRINT_SNAPSHOT 
+                (ID_SPRINT, FASE, DESCRICAO_CUSTOMIZADA, QTD_TOTAL, QTD_SUST, QTD_DESV)
+                VALUES 
+                (:id, :fase, :descricao_snap, :total, :sust, :desv)
+            """)
+            s.execute(query_snap, {
+                "id": id_sprint,
+                "fase": fase_snapshot,
+                "descricao_snap": desc_snapshot,
+                "total": total_geral,
+                "sust": total_sust,
+                "desv": total_desv
+            })
             
-            s.execute(text("UPDATE TB_SPRINT SET ULTIMA_ATUALIZACAO = CURRENT_TIMESTAMP() WHERE ID_SPRINT=:id"), {"id": id_sprint})
+            s.execute(text("UPDATE TB_SPRINT SET ULTIMA_ATUALIZACAO = NOW() WHERE ID_SPRINT=:id"), {"id": id_sprint})
             
             s.commit()
         
