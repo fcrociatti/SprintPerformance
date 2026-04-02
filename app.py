@@ -419,6 +419,8 @@ with aba_dashboard:
                 ini_tot, ini_sus, ini_des = 0, 0, 0
                 chk_tot, chk_sus, chk_des = 0, 0, 0
                 fin_tot, fin_sus, fin_des = 0, 0, 0
+                
+                dt_ini_str, dt_chk_str, dt_fin_str = "", "", ""
 
                 if 'df_snapshots' in locals() and not df_snapshots.empty:
                     snaps_sprint = df_snapshots[df_snapshots['sprint_id'] == id_sprint_selecionada]
@@ -427,32 +429,33 @@ with aba_dashboard:
                     if not df_ini.empty:
                         last_ini = df_ini.iloc[-1]
                         ini_tot, ini_sus, ini_des = last_ini['qtd_total'], last_ini['qtd_sust'], last_ini['qtd_desv']
+                        dt_ini_str = f" - {(pd.to_datetime(last_ini['data_registro']) - pd.Timedelta(hours=3)).strftime('%d/%m %H:%M')}"
 
                     df_chk = snaps_sprint[snaps_sprint['fase'] == 'CHECKPOINT']
                     if not df_chk.empty:
                         last_chk = df_chk.iloc[-1]
                         chk_tot, chk_sus, chk_des = last_chk['qtd_total'], last_chk['qtd_sust'], last_chk['qtd_desv']
+                        dt_chk_str = f" - {(pd.to_datetime(last_chk['data_registro']) - pd.Timedelta(hours=3)).strftime('%d/%m %H:%M')}"
 
                     df_fin = snaps_sprint[snaps_sprint['fase'] == 'FINAL']
                     if not df_fin.empty:
                         last_fin = df_fin.iloc[-1]
                         fin_tot, fin_sus, fin_des = last_fin['qtd_total'], last_fin['qtd_sust'], last_fin['qtd_desv']
+                        dt_fin_str = f" - {(pd.to_datetime(last_fin['data_registro']) - pd.Timedelta(hours=3)).strftime('%d/%m %H:%M')}"
 
-                # ==================================
-                # SEU LAYOUT ORIGINAL RESTAURADO
-                # ==================================
+                
                 col_sn1, col_sn2, col_sn3 = st.columns(3)
                 
-                col_sn1.markdown("**Planning (Planning Inicio)**")
+                col_sn1.markdown(f"**Planning (Dia de Início){dt_ini_str}**")
                 col_sn1.metric("Total de Itens", f"{ini_tot:.0f}")
                 col_sn1.write(f"🔧 Sust: {ini_sus:.0f} | 💻 Desv: {ini_des:.0f}")
                 
-                col_sn2.markdown("**Checkpoint**")
+                col_sn2.markdown(f"**Checkpoint{dt_chk_str}**")
                 delta_chk = chk_tot - ini_tot
                 col_sn2.metric("Total de Itens", f"{chk_tot:.0f}", delta=f"{delta_chk:.0f} itens", delta_color="inverse")
                 col_sn2.write(f"🔧 Sust: {chk_sus:.0f} | 💻 Desv: {chk_des:.0f}")
                 
-                col_sn3.markdown("**Final (Encerramento)**")
+                col_sn3.markdown(f"**Final (Encerramento){dt_fin_str}**")
                 delta_fin = fin_tot - chk_tot
                 col_sn3.metric("Total de Itens", f"{fin_tot:.0f}", delta=f"{delta_fin:.0f} itens", delta_color="inverse")
                 col_sn3.write(f"🔧 Sust: {fin_sus:.0f} | 💻 Desv: {fin_des:.0f}")

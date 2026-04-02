@@ -346,24 +346,27 @@ def executar_extracao(data_inicio_input, data_fim_input, descricao_input, fase_s
         return False, msg_validacao 
         
     try:
+        # ==========================================
+        # EXTRAÇÃO DE PONTOS (STAR E ELFA)
+        # ==========================================
         dados_star_pontos = obter_dados_projeto("STAR")
         sincronizar_com_banco(dados_star_pontos, "STAR", id_sprint)
         
+        dados_elfa_pontos = obter_dados_projeto("ELFA")
+        sincronizar_com_banco(dados_elfa_pontos, "ELFA", id_sprint)
+        
+        
         hoje = datetime.now(timezone.utc)
         
-        # Só atualiza a 'foto' do Jira se a sprint ainda estiver ativa
         if fim >= hoje:
             extrair_e_salvar_backlog("STAR", id_sprint)
-            status_backlog = "Pontos e Snapshot do Backlog atualizados."
+            status_backlog = "Pontos (STAR e ELFA) e Snapshot do Backlog (STAR) atualizados."
         else:
-            status_backlog = "Apenas pontos atualizados (Snapshot do Backlog preservado, pois a sprint já foi encerrada)."
+            status_backlog = "Apenas pontos (STAR e ELFA) atualizados (Snapshot do Backlog preservado, pois a sprint já foi encerrada)."
             print(f"🔒 Sprint encerrada em {fim.strftime('%d/%m/%Y')}. Snapshot do backlog preservado.")
-        
         tipos_sust = ['erro', 'atendimento', 'retorno negativo (rn)']
         
-        # ==========================================
-        # SESSÃO ÚNICA DE BANCO DE DADOS (Mais seguro)
-        # ==========================================
+        
         with conn.session as s:
             query_bk = text("SELECT TIPO_ITEM FROM TB_SPRINT_BACKLOG WHERE ID_SPRINT = :id")
             itens_bk = s.execute(query_bk, {"id": id_sprint}).fetchall()
