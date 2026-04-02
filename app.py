@@ -126,27 +126,20 @@ with aba_historico:
                
                 st.write("**📊 Evolução de Entregas por Desenvolvedor**")
                     
-                    # Agrupa os dados
                 df_agrupado_hist = df_hist.groupby(['descricao', 'data_inicio', 'responsavel'])['pontos'].sum().reset_index()
                     
-                    # Mantém a ordem cronológica para as Sprints não ficarem bagunçadas
                 ordem_cronologica = df_agrupado_hist.sort_values('data_inicio')['descricao'].unique().tolist()
                     
                 if not df_agrupado_hist.empty:
                         barras_desempenho = alt.Chart(df_agrupado_hist).mark_bar(cornerRadiusTopLeft=3, cornerRadiusTopRight=3).encode(
-                            # Eixo X principal agora é o DESENVOLVEDOR
                             x=alt.X('responsavel:N', title='Desenvolvedor', axis=alt.Axis(labelAngle=0)),
                             
-                            # Eixo Y (A métrica de entrega)
                             y=alt.Y('pontos:Q', title='Pontos Entregues'),
                             
-                            # O xOffset agora agrupa as SPRINTS dentro do bloco de cada Desenvolvedor
                             xOffset=alt.XOffset('descricao:N', sort=ordem_cronologica),
                             
-                            # Colore cada barra de acordo com a Sprint (respeitando a ordem de tempo)
                             color=alt.Color('descricao:N', title='Sprint', sort=ordem_cronologica, scale=alt.Scale(scheme='tableau10')),
                             
-                            # Tooltip para quando passar o mouse
                             tooltip=[
                                 alt.Tooltip('responsavel:N', title='Desenvolvedor'),
                                 alt.Tooltip('descricao:N', title='Sprint'),
@@ -171,6 +164,28 @@ with aba_historico:
                 textos_hist = grafico_barras_hist.mark_text(align='left', baseline='middle', dx=5, color='white', fontWeight='bold').encode(text='pontos:Q')
                 st.altair_chart((grafico_barras_hist + textos_hist).properties(height=350), use_container_width=True, theme="streamlit")
                     
+            
+                
+                st.divider()
+                st.write("**📋 Tabela Detalhada: Esforço por Sprint**")
+                
+                df_pivot = df_agrupado_hist.pivot_table(
+                    index='responsavel', 
+                    columns='descricao', 
+                    values='pontos', 
+                    aggfunc='sum', 
+                    fill_value=0
+                )
+                
+                colunas_existentes = [s for s in ordem_cronologica if s in df_pivot.columns]
+                df_pivot = df_pivot[colunas_existentes]
+                
+                df_pivot['Total Acumulado'] = df_pivot.sum(axis=1)
+                
+                df_pivot = df_pivot.reset_index().rename(columns={'responsavel': 'Desenvolvedor'})
+                
+                st.dataframe(df_pivot, use_container_width=True, hide_index=True)
+
             else:
                 st.info("Nenhum dado encontrado para os filtros selecionados.")
     else:
