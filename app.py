@@ -293,25 +293,32 @@ with aba_sincronizacao:
                     dt_inicio_upd = row_sprint['data_inicio'] if not isinstance(row_sprint['data_inicio'], str) else datetime.strptime(row_sprint['data_inicio'], "%Y-%m-%d").date()
                     dt_fim_upd = row_sprint['data_fim'] if not isinstance(row_sprint['data_fim'], str) else datetime.strptime(row_sprint['data_fim'], "%Y-%m-%d").date()
                     desc_upd = row_sprint['descricao']
+                    id_sprint_upd = int(row_sprint['id'])
                     
-                    desc_final = desc_snapshot.strip()
+                    tem_inicio = False
+                    if 'df_snapshots' in locals() and not df_snapshots.empty:
+                        snaps_sprint_upd = df_snapshots[df_snapshots['sprint_id'] == id_sprint_upd]
+                        if not snaps_sprint_upd[snaps_sprint_upd['fase'] == 'INICIO'].empty:
+                            tem_inicio = True
 
+                    desc_final = desc_snapshot.strip()
                     hoje_date = datetime.now().date()
                     
                     if is_checkpoint: 
                         fase_calc = "CHECKPOINT"
-                        if not desc_final: 
-                            desc_final = "Registro oficial de Checkpoint"
-                            
+                        if not desc_final: desc_final = "Registro oficial de Checkpoint"
+                        
                     elif hoje_date >= dt_fim_upd: 
                         fase_calc = "FINAL"
-                        if not desc_final:
-                            desc_final = "Encerramento oficial da Sprint"
-                            
+                        if not desc_final: desc_final = "Encerramento oficial da Sprint"
+                        
+                    elif hoje_date >= dt_inicio_upd and not tem_inicio:
+                        fase_calc = "INICIO"
+                        if not desc_final: desc_final = "Abertura oficial da Sprint (Planning)"
+                        
                     else: 
                         fase_calc = "AVULSO"
-                        if not desc_final:
-                            desc_final = "Atualização de rotina"
+                        if not desc_final: desc_final = "Atualização de rotina"
 
                     with st.spinner(f"Atualizando dados da {sprint_para_atualizar}..."):
                         sucesso, mensagem = executar_extracao(dt_inicio_upd, dt_fim_upd, desc_upd, fase_calc, desc_final)
