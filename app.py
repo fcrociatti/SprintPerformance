@@ -243,12 +243,21 @@ with aba_sincronizacao:
                     if sobreposicao: 
                         st.error(f"❌ Sobreposição detetada com: **{sprint_conflito}**.")
                     else:
+                        hoje_date = datetime.now().date()
+                        
+                        if hoje_date < dt_inicio:
+                            fase_calc_nova = "AVULSO"
+                            desc_padrao = "Quantidade no cadastro sprint"
+                        else:
+                            fase_calc_nova = "INICIO"
+                            desc_padrao = "Abertura oficial da Sprint (Planning)"
+
                         desc_final_nova = desc_snapshot_nova.strip()
                         if not desc_final_nova:
-                            desc_final_nova = "Abertura oficial da Sprint (Planning)"
+                            desc_final_nova = desc_padrao
 
                         with st.spinner('A conectar ao Jira...'):
-                            sucesso, mensagem = executar_extracao(dt_inicio, dt_fim, descricao_input, "INICIO", desc_final_nova) 
+                            sucesso, mensagem = executar_extracao(dt_inicio, dt_fim, descricao_input, fase_calc_nova, desc_final_nova) 
                             if sucesso:
                                 st.success(f"✅ Dados importados!")
                                 st.cache_data.clear()
@@ -274,7 +283,7 @@ with aba_sincronizacao:
                 st.markdown("---")
                 
                 is_checkpoint = st.checkbox(" Registrar contagem como Checkpoint")
-                desc_snapshot = st.text_input("Observação para o Log (Opcional):", placeholder="Ex: Antes do refinamento da gestão")
+                desc_snapshot = st.text_input("Observação para o Log (Opcional):", placeholder="Ex: Antes do refinamento Checkpoint")
                 
                 st.markdown("---")
 
@@ -394,7 +403,7 @@ with aba_dashboard:
             with st.container(border=True):
                
                 c_tit, c_lbl = st.columns([3, 1])
-                c_tit.markdown("#### 📌 Marcadores Principais (Jira)")
+                c_tit.markdown("#### 📌 Marcadores Principais (Pendentes de desenvolvimento)")
                 
                 row_sprint_atual = df_sprints[df_sprints['id'] == id_sprint_selecionada].iloc[0]
                 dt_ult = row_sprint_atual.get('ultima_atualizacao')
