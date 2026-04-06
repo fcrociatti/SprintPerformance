@@ -29,6 +29,7 @@ with col_logo:
 # ==========================================
 @st.cache_data(ttl=600)
 def carregar_issues():
+    conn.reset()
     query = """
         SELECT ID_SPRINT_DETAILS as id, ISSUE_KEY as issue_key, PROJETO as projeto, 
                RESPONSAVEL as responsavel, TIPO_ITEM as tipo_item, CATEGORIA as categoria, 
@@ -40,6 +41,7 @@ def carregar_issues():
 
 @st.cache_data(ttl=600)
 def carregar_sprints():
+    conn.reset()
     query = """
         SELECT ID_SPRINT as id, NOME_SPRINT as nome_sprint, DATA_INICIO as data_inicio, 
                DATA_FIM as data_fim, ITENS_INICIAIS as itens_iniciais, 
@@ -53,6 +55,7 @@ def carregar_sprints():
 
 @st.cache_data(ttl=600)
 def carregar_snapshots():
+    conn.reset()
     query = """
         SELECT ID_SNAPSHOT as id, ID_SPRINT as sprint_id, FASE as fase, 
                DESCRICAO_CUSTOMIZADA as descricao, QTD_TOTAL as qtd_total, 
@@ -64,6 +67,7 @@ def carregar_snapshots():
 
 @st.cache_data(ttl=600)
 def carregar_backlog():
+    conn.reset()
     query = """
         SELECT ID_SPRINT_BACKLOG as id, ID_SPRINT as sprint_id, ISSUE_KEY as issue_key, 
                PROJETO as projeto, RESPONSAVEL as responsavel, PAPEL as papel, 
