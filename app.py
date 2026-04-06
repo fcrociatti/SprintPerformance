@@ -487,6 +487,91 @@ with aba_dashboard:
                         st.dataframe(snaps_exibicao, use_container_width=True, hide_index=True)
                     else:
                         st.info("Nenhum log registrado.")
+
+        
+            st.divider()
+            st.subheader("📊 Matriz Comparativa de Sprints")
+            st.write("Analise a evolução de itens e a distribuição da equipe ao longo das Sprints.")
+            
+            todas_sprints_nomes = df_sprints['nome_sprint'].tolist()
+            
+            sprints_selecionadas = st.multiselect(
+                "Selecione as Sprints para comparar (Colunas):",
+                options=todas_sprints_nomes,
+                default=todas_sprints_nomes
+            )
+            
+            if sprints_selecionadas:
+                linhas_apontadores = [
+                    "📦 Total de Itens",
+                    "🔧 Sustentação",
+                    "💻 Desenvolvimento",
+                    " Total Foco Sérgio+Eder",
+                    " Sérgio",
+                    " Eder",
+                    " Daniel",
+                    " Total Análise",
+                    " Anderson",
+                    " Fernando",
+                    " Gustavo",
+                    " Nathan"
+                ]
+                
+                dados_matriz = {"Apontadores Principais": linhas_apontadores}
+                
+                for nome_sp in sprints_selecionadas:
+                    id_sp = int(df_sprints[df_sprints['nome_sprint'] == nome_sp].iloc[0]['id'])
+                    
+                    tot, sus, des = 0, 0, 0
+                    qtd_sergio, qtd_eder, qtd_daniel = 0, 0, 0
+                    tot_foco_se = 0
+                    qtd_anderson, qtd_fernando, qtd_gustavo, qtd_nathan = 0, 0, 0, 0
+                    tot_analise = 0
+                    
+                    if 'df_snapshots' in locals() and not df_snapshots.empty:
+                        snaps_sp = df_snapshots[df_snapshots['sprint_id'] == id_sp]
+                        if not snaps_sp.empty:
+                            last_snap = snaps_sp.iloc[-1]
+                            tot, sus, des = last_snap['qtd_total'], last_snap['qtd_sust'], last_snap['qtd_desv']
+                    
+                    if 'df_backlog' in locals() and not df_backlog.empty:
+                        col_id = next((col for col in df_backlog.columns if col.lower() in ['id_sprint', 'sprint_id']), None)
+                        
+                        if col_id:
+                            bk_sp = df_backlog[df_backlog[col_id] == id_sp]
+                            
+                            if not bk_sp.empty:
+                                col_resp = next((col for col in bk_sp.columns if col.lower() in ['responsavel', 'assignee', 'responsável']), None)
+                                
+                                if col_resp:
+                                    resps = bk_sp[col_resp].fillna('').str.lower()
+                                    
+                                    qtd_sergio = resps.str.contains('sergio|sérgio').sum()
+                                    qtd_eder = resps.str.contains('eder').sum()
+                                    qtd_daniel = resps.str.contains('daniel').sum()
+                                    tot_foco_se = qtd_sergio + qtd_eder
+                                    
+                                    qtd_anderson = resps.str.contains('anderson').sum()
+                                    qtd_fernando = resps.str.contains('fernando').sum()
+                                    qtd_gustavo = resps.str.contains('gustavo').sum()
+                                    qtd_nathan = resps.str.contains('nathan').sum()
+                                    tot_analise = qtd_anderson + qtd_fernando + qtd_gustavo + qtd_nathan
+                        
+                    dados_matriz[nome_sp] = [
+                        tot, sus, des,
+                        tot_foco_se, qtd_sergio, qtd_eder, qtd_daniel,
+                        tot_analise, qtd_anderson, qtd_fernando, qtd_gustavo, qtd_nathan
+                    ]
+                
+                # 4. Renderiza a tabela
+                df_matriz = pd.DataFrame(dados_matriz)
+                
+                for col in sprints_selecionadas:
+                    df_matriz[col] = df_matriz[col].astype(int)
+                    
+                st.dataframe(df_matriz, use_container_width=True, hide_index=True)
+            else:
+                st.info("⚠️ Selecione pelo menos uma Sprint no filtro acima para visualizar o comparativo.")            
                 
 
             col_eq1, col_eq2 = st.columns(2)

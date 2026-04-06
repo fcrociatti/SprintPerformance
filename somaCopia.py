@@ -156,6 +156,8 @@ ANALISTAS = ["Fernando", "Anderson", "Gustavo", "Nathan"]
 
 def limpar_snapshot_sprint(id_sprint, fase):
     try:
+
+        conn.reset()
         with conn.session as s:
             if fase == "TODAS":
                 s.execute(text("DELETE FROM TB_SPRINT_SNAPSHOT WHERE ID_SPRINT=:id"), {"id": id_sprint})
@@ -302,7 +304,7 @@ def obter_ou_criar_sprint(inicio, fim, descricao):
 
     df_sprints = conn.query("SELECT ID_SPRINT, DATA_INICIO, DATA_FIM, DESCRICAO FROM TB_SPRINT ORDER BY DATA_FIM DESC", ttl=0)
     sprints_existentes = df_sprints.to_dict('records')
-    
+
     for sp in sprints_existentes:
         sp_inicio_str = sp['DATA_INICIO'].strftime("%Y-%m-%d") if not isinstance(sp['DATA_INICIO'], str) else sp['DATA_INICIO']
         sp_fim_str = sp['DATA_FIM'].strftime("%Y-%m-%d") if not isinstance(sp['DATA_FIM'], str) else sp['DATA_FIM']
@@ -346,9 +348,8 @@ def executar_extracao(data_inicio_input, data_fim_input, descricao_input, fase_s
         return False, msg_validacao 
         
     try:
-        # ==========================================
-        # EXTRAÇÃO DE PONTOS (STAR E ELFA)
-        # ==========================================
+        conn.reset()
+
         dados_star_pontos = obter_dados_projeto("STAR")
         sincronizar_com_banco(dados_star_pontos, "STAR", id_sprint)
         
