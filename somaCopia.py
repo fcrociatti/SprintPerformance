@@ -300,9 +300,9 @@ def obter_ou_criar_sprint(inicio, fim, descricao):
     fim_str = dt_fim.strftime("%Y-%m-%d")
     nome_sprint = f"Sprint {dt_inicio.strftime('%d/%m')} a {dt_fim.strftime('%d/%m')}"
 
-    df_sprints = conn.query("SELECT * FROM TB_SPRINT ORDER BY DATA_FIM DESC")
+    df_sprints = conn.query("SELECT ID_SPRINT, DATA_INICIO, DATA_FIM, DESCRICAO FROM TB_SPRINT ORDER BY DATA_FIM DESC", ttl=0)
     sprints_existentes = df_sprints.to_dict('records')
-
+    
     for sp in sprints_existentes:
         sp_inicio_str = sp['DATA_INICIO'].strftime("%Y-%m-%d") if not isinstance(sp['DATA_INICIO'], str) else sp['DATA_INICIO']
         sp_fim_str = sp['DATA_FIM'].strftime("%Y-%m-%d") if not isinstance(sp['DATA_FIM'], str) else sp['DATA_FIM']
