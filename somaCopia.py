@@ -342,6 +342,8 @@ def executar_extracao(data_inicio_input, data_fim_input, descricao_input, fase_s
     fim = datetime.combine(data_fim_input, datetime.max.time()).replace(tzinfo=timezone.utc)
     periodos = [(inicio, fim)]
     
+    conn.reset()
+
     id_sprint, msg_validacao = obter_ou_criar_sprint(inicio, fim, descricao_input)
     
     if not id_sprint:
