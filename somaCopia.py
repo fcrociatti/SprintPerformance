@@ -177,7 +177,7 @@ def extrair_e_salvar_backlog(projeto, sprint_id):
     next_token = ""
     
     jql_backlog = (
-        f'type != bug AND project = "{projeto}" '
+        f'type != bug AND project in ("{projeto}") '
         f'AND Sprint in (openSprints(),EMPTY) '
         f'AND status NOT IN ("6.0 Concluído", "6.0 Pend. Merge p/ Homol.", "6.1 Pend. Gerar Artefatos", "6.2 Pend. Envio Homolog.", "7.0 Dispensado", "5.0 Pendência do Usuário", "5.1 Esperando por Aprovação", "5.2 Comercial - Aprovado", "5.3 Pendência de Homolog", "3.3 Revisão de Código", "4.0 A testar", "4.1 Testando", "4.2 Mergear", "4.3 Pend. Versão") '
         f'ORDER BY created DESC'

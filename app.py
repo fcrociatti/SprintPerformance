@@ -181,7 +181,7 @@ with aba_historico:
             
                 
                 st.divider()
-                st.write("**📋 Tabela Detalhada: Esforço por Sprint**")
+                st.write("**Tabela Detalhada: Esforço por Sprint**")
                 
                 df_pivot = df_agrupado_hist.pivot_table(
                     index='responsavel', 
@@ -198,7 +198,18 @@ with aba_historico:
                 
                 df_pivot = df_pivot.reset_index().rename(columns={'responsavel': 'Desenvolvedor'})
                 
-                st.dataframe(df_pivot, use_container_width=True, hide_index=True)
+                df_exibicao = df_pivot.copy()
+                
+                linha_total = df_exibicao.sum(numeric_only=True)
+                
+                linha_total = linha_total.reindex(df_exibicao.columns, fill_value="")
+                
+                linha_total.iloc[0] = " TOTAL"
+
+                df_linha_total = pd.DataFrame([linha_total])
+                df_exibicao = pd.concat([df_linha_total, df_exibicao], ignore_index=True)
+
+                st.dataframe(df_exibicao, use_container_width=True, hide_index=True)
 
             else:
                 st.info("Nenhum dado encontrado para os filtros selecionados.")
@@ -567,7 +578,6 @@ with aba_dashboard:
                         tot_analise, qtd_anderson, qtd_fernando, qtd_gustavo, qtd_nathan
                     ]
                 
-                # 4. Renderiza a tabela
                 df_matriz = pd.DataFrame(dados_matriz)
                 
                 for col in sprints_selecionadas:
@@ -736,23 +746,28 @@ with aba_dashboard:
             col_rank1, col_rank2 = st.columns([2, 3])
             
             with col_rank1:
-                st.write("**🏆 Top 10 Entregas por Desenvolvedor**")
-                
-                df_ranking = df_filtrado.groupby('responsavel')['pontos'].sum().reset_index()
-                df_ranking = df_ranking[df_ranking['pontos'] > 0]
-                df_ranking = df_ranking.sort_values(by='pontos', ascending=False).head(10)
+                    st.write("🏆 Entregas por Desenvolvedor")
+                    
+                    df_ranking = df_filtrado.groupby('responsavel')['pontos'].sum().reset_index()
+                    df_ranking = df_ranking[df_ranking['pontos'] > 0]
+                    
+                    df_ranking = df_ranking.sort_values(by='pontos', ascending=False)
 
-                if not df_ranking.empty:
-                    grafico_barras = alt.Chart(df_ranking).mark_bar(color='#4CA6FF').encode(
-                        x=alt.X('pontos:Q', title='Pontos Entregues', axis=alt.Axis(grid=False)),
-                        y=alt.Y('responsavel:N', sort='-x', title=''), 
-                        tooltip=['responsavel', 'pontos']
-                    )
-                    textos = grafico_barras.mark_text(align='left', baseline='middle', dx=5, color='white', fontWeight='bold').encode(text='pontos:Q')
-                    grafico_final = (grafico_barras + textos).properties(height=350)
-                    st.altair_chart(grafico_final, use_container_width=True, theme="streamlit")
-                else:
-                    st.info("Sem pontuações > 0.")
+                    if not df_ranking.empty:
+                        altura_dinamica = max(350, len(df_ranking) * 30)
+
+                        grafico_barras = alt.Chart(df_ranking).mark_bar(color='#4CA6FF').encode(
+                            x=alt.X('pontos:Q', title='Pontos Entregues', axis=alt.Axis(grid=False)),
+                            y=alt.Y('responsavel:N', sort='-x', title=''), 
+                            tooltip=['responsavel', 'pontos']
+                        )
+                        
+                        textos = grafico_barras.mark_text(align='left', baseline='middle', dx=5, color='white').encode(text='pontos:Q')
+                        
+                        grafico_final = (grafico_barras + textos).properties(height=altura_dinamica)
+                        st.altair_chart(grafico_final, use_container_width=True, theme="streamlit")
+                    else:
+                        st.info("Sem pontuações > 0.")
 
             with col_rank2:
                 st.write("**Detalhamento das Tarefas Entregues**")
