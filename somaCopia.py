@@ -11,6 +11,7 @@ JIRA_URL = st.secrets["JIRA_URL"]
 JIRA_USER = st.secrets["JIRA_USER"]
 JIRA_TOKEN = st.secrets["JIRA_TOKEN"]
 
+CUSTOM_SISTEMA_FIELD = "customfield_10079"
 CUSTOM_POINT_FIELD = "customfield_10069" 
 CUSTOM_DATE_FIELD = "customfield_10231" 
 CUSTOM_CLIENTE_FIELD = "customfield_10133" 
@@ -39,16 +40,29 @@ def extrair_cliente(issue_fields):
             return str(cliente_raw)
     return "Sem Cliente"
 
+def extrair_sistema(issue_fields):
+    sistema_raw = issue_fields.get(CUSTOM_SISTEMA_FIELD)
+    if sistema_raw:
+        if isinstance(sistema_raw, dict) and "value" in sistema_raw:
+            return sistema_raw["value"]
+        elif isinstance(sistema_raw, str):
+            return sistema_raw
+        else:
+            return str(sistema_raw)
+    return "Sem Sistema"
+
 def obter_dados_projeto(projeto):
     dados = []
     next_token = ""
     while True:
         jql = f'project = "{projeto}" AND TYPE != Bug ORDER BY created DESC'
         
-        params = {"jql": jql, "fields": f"{CUSTOM_POINT_FIELD},{CUSTOM_DATE_FIELD},assignee,status,issuetype,summary,{CUSTOM_CLIENTE_FIELD},created", "expand": "changelog", "maxResults": 50}
+        
+
+        params = {"jql": jql, "fields": f"{CUSTOM_SISTEMA_FIELD},{CUSTOM_POINT_FIELD},{CUSTOM_DATE_FIELD},assignee,status,issuetype,summary,{CUSTOM_CLIENTE_FIELD},created", "expand": "changelog", "maxResults": 25}
         
         if next_token: params["nextPageToken"] = next_token
-        resp = requests.get(f"{JIRA_URL}/rest/api/3/search/jql", headers=headers, auth=auth, params=params)
+        resp = requests.get(f"{JIRA_URL}/rest/api/3/search/jql", headers=headers, auth=auth, params=params, timeout=60)
         
         try: resp.raise_for_status()
         except requests.exceptions.HTTPError as e:
@@ -95,7 +109,10 @@ def obter_dados_projeto(projeto):
             resumo = issue["fields"].get("summary", "Sem resumo")
             cliente_nome = extrair_cliente(issue["fields"])
                 
-            
+            status_info = issue["fields"].get("status")
+            status_nome = status_info["name"] if status_info else "Desconhecido"
+
+            sistema_nome = extrair_sistema(issue["fields"])            
             dados.append({
                 "Key": key, 
                 "Data_Transicao": data_transicao.strftime("%Y-%m-%d %H:%M:%S"), 
@@ -104,7 +121,9 @@ def obter_dados_projeto(projeto):
                 "Pontos_Sustentacao": pontos_sustentacao, 
                 "Pontos_Desenvolvimento": pontos_desenvolvimento,
                 "Resumo": resumo, 
-                "Cliente": cliente_nome
+                "Cliente": cliente_nome,
+                "Status" : status_nome,
+                "Sistema" : sistema_nome
             })
 
             data_iso = periodo_inicio.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "+0000"
@@ -177,7 +196,7 @@ def extrair_e_salvar_backlog(projeto, sprint_id):
     next_token = ""
     
     jql_backlog = (
-        f'type != bug AND project in ("{projeto}") '
+        f'type not in( bug , Ajuste)  AND project in ("{projeto}") '
         f'AND Sprint in (openSprints(),EMPTY) '
         f'AND status NOT IN ("6.0 Concluído", "6.0 Pend. Merge p/ Homol.", "6.1 Pend. Gerar Artefatos", "6.2 Pend. Envio Homolog.", "7.0 Dispensado", "5.0 Pendência do Usuário", "5.1 Esperando por Aprovação", "5.2 Comercial - Aprovado", "5.3 Pendência de Homolog", "3.3 Revisão de Código", "4.0 A testar", "4.1 Testando", "4.2 Mergear", "4.3 Pend. Versão") '
         f'ORDER BY created DESC'
@@ -186,12 +205,12 @@ def extrair_e_salvar_backlog(projeto, sprint_id):
     while True:
         params = {
             "jql": jql_backlog,
-            "fields": f"assignee,issuetype,summary,{CUSTOM_CLIENTE_FIELD},created",
-            "maxResults": 50
+            "fields": f"assignee,issuetype,summary,{CUSTOM_CLIENTE_FIELD},{CUSTOM_SISTEMA_FIELD},created,status",
+            "maxResults": 25
         }
         
         if next_token: params["nextPageToken"] = next_token
-        resp = requests.get(f"{JIRA_URL}/rest/api/3/search/jql", headers=headers, auth=auth, params=params)
+        resp = requests.get(f"{JIRA_URL}/rest/api/3/search/jql", headers=headers, auth=auth, params=params, timeout=60)
         
         try: resp.raise_for_status()
         except requests.exceptions.HTTPError as e:
@@ -217,6 +236,11 @@ def extrair_e_salvar_backlog(projeto, sprint_id):
             data_criacao_raw = issue["fields"].get("created", "")
             data_criacao = data_criacao_raw[:10] if data_criacao_raw else "2000-01-01"
 
+            status_info = issue["fields"].get("status")
+            status_nome = status_info["name"] if status_info else "Desconhecido"
+
+            sistema_nome = extrair_sistema(issue["fields"])
+            
             dados_backlog.append({
                 "ID_SPRINT": sprint_id, 
                 "ISSUE_KEY": key,
@@ -226,28 +250,26 @@ def extrair_e_salvar_backlog(projeto, sprint_id):
                 "TIPO_ITEM": tipo_item_nome,
                 "RESUMO": resumo,
                 "CLIENTE": cliente_nome, 
-                "DATA_CRIACAO" : data_criacao
+                "DATA_CRIACAO" : data_criacao,
+                "STATUS": status_nome, 
+                "SISTEMA" :  sistema_nome
             })
 
         if data_json.get("isLast") or not data_json.get("issues", []): break
         next_token = data_json.get("nextPageToken")
         if not next_token: break
 
-
-
     if dados_backlog:
         try:
-    
             with conn.session as s:
                 s.execute(text("DELETE FROM TB_SPRINT_BACKLOG WHERE ID_SPRINT = :id"), {"id": sprint_id})
                 s.commit()
             
-        
             query = text("""
                 INSERT INTO TB_SPRINT_BACKLOG 
-                (ID_SPRINT, ISSUE_KEY, PROJETO, RESPONSAVEL, PAPEL, TIPO_ITEM, RESUMO, CLIENTE, DATA_CRIACAO)
+                (ID_SPRINT, ISSUE_KEY, PROJETO, RESPONSAVEL, PAPEL, TIPO_ITEM, RESUMO, CLIENTE, DATA_CRIACAO, STATUS, SISTEMA)
                 VALUES 
-                (:ID_SPRINT, :ISSUE_KEY, :PROJETO, :RESPONSAVEL, :PAPEL, :TIPO_ITEM, :RESUMO, :CLIENTE, :DATA_CRIACAO)
+                (:ID_SPRINT, :ISSUE_KEY, :PROJETO, :RESPONSAVEL, :PAPEL, :TIPO_ITEM, :RESUMO, :CLIENTE, :DATA_CRIACAO, :STATUS, :SISTEMA)
             """)
             with conn.session as s:
                 s.execute(query, dados_backlog)
@@ -272,18 +294,21 @@ def sincronizar_com_banco(dados_extracao, projeto_nome, sprint_id):
             "DATA_CONCLUSAO": item["Data_Transicao"], 
             "ID_SPRINT": sprint_id,
             "RESUMO": item["Resumo"], 
-            "CLIENTE": item["Cliente"] 
+            "CLIENTE": item["Cliente"],
+            "STATUS": item.get("Status", "Desconhecido"),
+            "SISTEMA": item["Sistema"]
+
         })
     
     try:
         query = text("""
             INSERT INTO TB_SPRINT_DETAILS 
-            (ISSUE_KEY, PROJETO, RESPONSAVEL, TIPO_ITEM, CATEGORIA, PONTOS, DATA_CONCLUSAO, ID_SPRINT, RESUMO, CLIENTE)
+            (ISSUE_KEY, PROJETO, RESPONSAVEL, TIPO_ITEM, CATEGORIA, PONTOS, DATA_CONCLUSAO, ID_SPRINT, RESUMO, CLIENTE, STATUS, SISTEMA)
             VALUES 
-            (:ISSUE_KEY, :PROJETO, :RESPONSAVEL, :TIPO_ITEM, :CATEGORIA, :PONTOS, :DATA_CONCLUSAO, :ID_SPRINT, :RESUMO, :CLIENTE)
+            (:ISSUE_KEY, :PROJETO, :RESPONSAVEL, :TIPO_ITEM, :CATEGORIA, :PONTOS, :DATA_CONCLUSAO, :ID_SPRINT, :RESUMO, :CLIENTE, :STATUS, :SISTEMA)
             ON DUPLICATE KEY UPDATE 
             RESPONSAVEL = VALUES(RESPONSAVEL), TIPO_ITEM = VALUES(TIPO_ITEM), CATEGORIA = VALUES(CATEGORIA), 
-            PONTOS = VALUES(PONTOS), DATA_CONCLUSAO = VALUES(DATA_CONCLUSAO), CLIENTE = VALUES(CLIENTE), RESUMO = VALUES(RESUMO)
+            PONTOS = VALUES(PONTOS), DATA_CONCLUSAO = VALUES(DATA_CONCLUSAO), CLIENTE = VALUES(CLIENTE), RESUMO = VALUES(RESUMO), STATUS = VALUES(STATUS), SISTEMA = VALUES(SISTEMA)
         """)
         with conn.session as s:
             s.execute(query, payload)

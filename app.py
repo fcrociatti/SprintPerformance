@@ -27,19 +27,18 @@ with col_logo:
 # ==========================================
 # CARREGAMENTO GLOBAL DOS DADOS 
 # ==========================================
-@st.cache_data(ttl=600)
 def carregar_issues():
     conn.reset()
     query = """
         SELECT ID_SPRINT_DETAILS as id, ISSUE_KEY as issue_key, PROJETO as projeto, 
                RESPONSAVEL as responsavel, TIPO_ITEM as tipo_item, CATEGORIA as categoria, 
                PONTOS as pontos, DATA_CONCLUSAO as data_conclusao, ID_SPRINT as sprint_id, 
-               CLIENTE as cliente, RESUMO as resumo
+               CLIENTE as cliente, RESUMO as resumo, STATUS as status, SISTEMA as sistema
         FROM TB_SPRINT_DETAILS
     """
     return conn.query(query)
 
-@st.cache_data(ttl=600)
+
 def carregar_sprints():
     conn.reset()
     query = """
@@ -53,7 +52,6 @@ def carregar_sprints():
     return conn.query(query)
 
 
-@st.cache_data(ttl=600)
 def carregar_snapshots():
     conn.reset()
     query = """
@@ -65,14 +63,13 @@ def carregar_snapshots():
     """
     return conn.query(query)
 
-@st.cache_data(ttl=600)
 def carregar_backlog():
     conn.reset()
     query = """
         SELECT ID_SPRINT_BACKLOG as id, ID_SPRINT as sprint_id, ISSUE_KEY as issue_key, 
                PROJETO as projeto, RESPONSAVEL as responsavel, PAPEL as papel, 
                TIPO_ITEM as tipo_item, CLIENTE as cliente, RESUMO as resumo, 
-               DATA_CRIACAO as data_criacao 
+               DATA_CRIACAO as data_criacao, STATUS as status, SISTEMA as sistema
         FROM TB_SPRINT_BACKLOG
     """
     return conn.query(query)
@@ -81,6 +78,7 @@ df_issues = carregar_issues()
 df_sprints = carregar_sprints()
 df_snapshots = carregar_snapshots()
 df_backlog = carregar_backlog()
+
 
 if not df_sprints.empty:
     if 'descricao' not in df_sprints.columns:
@@ -108,17 +106,17 @@ with aba_historico:
         sprints_selecionadas_hist = col_f1.multiselect("1. Selecione as Sprints:", lista_sprints_hist, default=sprints_padrao)
         
         if sprints_selecionadas_hist:
-            ids_sprints_hist = df_sprints[df_sprints['nome_exibicao'].isin(sprints_selecionadas_hist)]['id'].tolist()
+                ids_sprints_hist = df_sprints[df_sprints['nome_exibicao'].isin(sprints_selecionadas_hist)]['id'].tolist()
+                
+                df_issues_completo = df_issues.merge(df_sprints[['id', 'descricao', 'data_inicio']], left_on='sprint_id', right_on='id')
+                df_hist = df_issues_completo[df_issues_completo['sprint_id'].isin(ids_sprints_hist)]
+                
+                devs_disp_hist = sorted(df_hist['responsavel'].unique())
+                devs_com_numero = [dev for dev in devs_disp_hist if str(dev)[0].isdigit()]
+                
+                devs_selecionados_hist = col_f2.multiselect("2. Filtrar Desenvolvedores:", devs_disp_hist, default=devs_com_numero)
             
-            df_issues_completo = df_issues.merge(df_sprints[['id', 'descricao', 'data_inicio']], left_on='sprint_id', right_on='id')
-            df_hist = df_issues_completo[df_issues_completo['sprint_id'].isin(ids_sprints_hist)]
-            
-            devs_disp_hist = sorted(df_hist['responsavel'].unique())
-            devs_selecionados_hist = col_f2.multiselect("2. Filtrar Desenvolvedores:", devs_disp_hist, default=devs_disp_hist)
-            
-            df_hist = df_hist[df_hist['responsavel'].isin(devs_selecionados_hist)]
-            
-            if not df_hist.empty:
+        if not df_hist.empty:
                 total_periodo = df_hist['pontos'].sum()
                 
                 qtd_sprints = len(ids_sprints_hist)
@@ -211,7 +209,7 @@ with aba_historico:
 
                 st.dataframe(df_exibicao, use_container_width=True, hide_index=True)
 
-            else:
+        else:
                 st.info("Nenhum dado encontrado para os filtros selecionados.")
     else:
         st.warning("É necessário cadastrar sprints e realizar buscas para visualizar o histórico.")
@@ -383,23 +381,47 @@ with aba_sincronizacao:
 # ==========================================
 with aba_dashboard:
     if not df_sprints.empty:
-        st.sidebar.header("Filtros da Sprint")
-        
         lista_sprints = df_sprints['nome_exibicao'].tolist()
         sprint_selecionada = st.sidebar.selectbox("Selecione a Sprint Atual", lista_sprints)
-        id_sprint_selecionada = df_sprints[df_sprints['nome_exibicao'] == sprint_selecionada]['id'].iloc[0]
+        
+        # 1. Força o ID a ser número inteiro
+        id_sprint_selecionada = int(df_sprints[df_sprints['nome_exibicao'] == sprint_selecionada]['id'].iloc[0])
 
-        projetos_issues = df_issues['projeto'].unique() if not df_issues.empty else []
-        projetos_backlog = df_backlog['projeto'].unique() if not df_backlog.empty else []
-        projetos_disponiveis = list(set(list(projetos_issues) + list(projetos_backlog)))
+        # 2. Limpa espaços invisíveis dos projetos (strip) para não quebrar a busca
+        projetos_issues = df_issues['projeto'].astype(str).str.strip().unique().tolist() if not df_issues.empty else []
+        projetos_backlog = df_backlog['projeto'].astype(str).str.strip().unique().tolist() if not df_backlog.empty else []
+        projetos_disponiveis = list(set(projetos_issues + projetos_backlog))
+        
         if not projetos_disponiveis: projetos_disponiveis = ["STAR"]
         projeto = st.sidebar.multiselect("Projeto", projetos_disponiveis, default=projetos_disponiveis)
         
-        if not df_issues.empty: df_filtrado = df_issues[(df_issues['projeto'].isin(projeto)) & (df_issues['sprint_id'] == id_sprint_selecionada)]
-        else: df_filtrado = pd.DataFrame()
+        if not projeto: # Trava: se desmarcar tudo sem querer, puxa todos
+            projeto = projetos_disponiveis
+
+        # 3. Filtros blindados
+        if not df_issues.empty: 
+            df_issues['sprint_id'] = pd.to_numeric(df_issues['sprint_id'], errors='coerce').fillna(0).astype(int)
+            df_issues['projeto'] = df_issues['projeto'].astype(str).str.strip()
+            df_filtrado = df_issues[(df_issues['projeto'].isin(projeto)) & (df_issues['sprint_id'] == id_sprint_selecionada)].copy()
+        else: 
+            df_filtrado = pd.DataFrame()
             
-        if not df_backlog.empty: df_backlog_filtrado = df_backlog[(df_backlog['projeto'].isin(projeto)) & (df_backlog['sprint_id'] == id_sprint_selecionada)].copy()
-        else: df_backlog_filtrado = pd.DataFrame()
+        if not df_backlog.empty: 
+            df_backlog['sprint_id'] = pd.to_numeric(df_backlog['sprint_id'], errors='coerce').fillna(0).astype(int)
+            df_backlog['projeto'] = df_backlog['projeto'].astype(str).str.strip()
+            df_backlog_filtrado = df_backlog[(df_backlog['projeto'].isin(projeto)) & (df_backlog['sprint_id'] == id_sprint_selecionada)].copy()
+        else: 
+            df_backlog_filtrado = pd.DataFrame()
+
+        # --- ALARME DE DIAGNÓSTICO (Aparece apenas se der erro) ---
+        if df_backlog_filtrado.empty:
+            if df_backlog.empty:
+                st.error("⚠️ DIAGNÓSTICO 1: O Python não encontrou NENHUM dado na tabela TB_SPRINT_BACKLOG. Limpe o Cache no topo direito ou atualize a sprint na aba 'Gerenciar Sprints'.")
+            else:
+                st.error(f"⚠️ DIAGNÓSTICO 2: O Banco tem {len(df_backlog)} itens pendentes, mas o Pandas não achou nenhum para a {sprint_selecionada}!")
+                st.write(f"ID esperado na Tela: **{id_sprint_selecionada}**")
+                st.write(f"IDs que realmente vieram no Banco: **{df_backlog['sprint_id'].unique()}**")
+        # -----------------------------------------------------------
 
         st.subheader(f"📋 Visão Geral da {sprint_selecionada.split(' - ')[0]} (Itens pendentes)")
         
@@ -711,19 +733,25 @@ with aba_dashboard:
                 
                 st.write("**Lista Completa do Backlog:**")
                 tabela_backlog = df_backlog_filtrado.copy()
+                
+                tabela_backlog.columns = tabela_backlog.columns.str.lower()
+                if 'status' not in tabela_backlog.columns:
+                    tabela_backlog['status'] = 'aguardando sincronizacao'
+                
                 tabela_backlog['link'] = "https://ddsinfo.atlassian.net/browse/" + tabela_backlog['issue_key']
                 st.dataframe(
-                    tabela_backlog[['issue_key', 'cliente', 'resumo', 'tipo_item', 'categoria', 'responsavel', 'link']], 
+                    tabela_backlog[['issue_key', 'cliente', 'resumo', 'status', 'tipo_item', 'categoria', 'responsavel', 'link']], 
                     use_container_width=True, hide_index=True,
                     column_config={
                         "issue_key": "Chave", "cliente": "Cliente",
                         "resumo": st.column_config.TextColumn("Resumo", width="large"),
+                        "status": "Status",
                         "tipo_item": "Tipo", "categoria": "Categoria", "responsavel": "Responsável", 
                         "link": st.column_config.LinkColumn("Jira")
                     }
                 )
         else:
-            st.info("Nenhum item em andamento encontrado.")
+                st.info("Nenhum item em andamento encontrado.")
 
         st.divider()
 
@@ -770,24 +798,29 @@ with aba_dashboard:
                         st.info("Sem pontuações > 0.")
 
             with col_rank2:
-                st.write("**Detalhamento das Tarefas Entregues**")
-                dev_selecionado = st.selectbox("Filtrar entregas por Desenvolvedor:", ["Todos"] + list(df_ranking['responsavel']))
+                    st.write("**Detalhamento das Tarefas Entregues**")
+                    dev_selecionado = st.selectbox("Filtrar entregas por Desenvolvedor:", ["Todos"] + list(df_ranking['responsavel']))
 
-                if dev_selecionado != "Todos": tabela_detalhe = df_filtrado[df_filtrado['responsavel'] == dev_selecionado].copy()
-                else: tabela_detalhe = df_filtrado.copy()
-                
-                tabela_detalhe['link'] = "https://ddsinfo.atlassian.net/browse/" + tabela_detalhe['issue_key']
-                
-                st.dataframe(
-                    tabela_detalhe[['issue_key', 'cliente', 'resumo', 'tipo_item', 'categoria', 'pontos', 'link']], 
-                    use_container_width=True, hide_index=True,
-                    column_config={
-                        "issue_key": "Chave", "cliente": "Cliente",
-                        "resumo": st.column_config.TextColumn("Resumo", width="large"),
-                        "tipo_item": "Tipo", "categoria": "Categoria", "pontos": "Pontos", 
-                        "link": st.column_config.LinkColumn("Jira")
-                    }
-                )
+                    if dev_selecionado != "Todos": tabela_detalhe = df_filtrado[df_filtrado['responsavel'] == dev_selecionado].copy()
+                    else: tabela_detalhe = df_filtrado.copy()
+                    
+                    tabela_detalhe.columns = tabela_detalhe.columns.str.lower()
+                    if 'status' not in tabela_detalhe.columns:
+                        tabela_detalhe['status'] = 'Aguardando Sincronização'
+                    
+                    tabela_detalhe['link'] = "https://ddsinfo.atlassian.net/browse/" + tabela_detalhe['issue_key']
+                    
+                    st.dataframe(
+                        tabela_detalhe[['issue_key', 'cliente', 'resumo', 'status', 'tipo_item', 'categoria', 'pontos', 'link']], 
+                        use_container_width=True, hide_index=True,
+                        column_config={
+                            "issue_key": "Chave", "cliente": "Cliente",
+                            "resumo": st.column_config.TextColumn("Resumo", width="large"),
+                            "status": "Status",
+                            "tipo_item": "Tipo", "categoria": "Categoria", "pontos": "Pontos", 
+                            "link": st.column_config.LinkColumn("Jira")
+                        }
+                    )
         else:
             st.info("Nenhuma entrega contabilizada.")
 
@@ -903,32 +936,38 @@ with aba_dashboard:
                     df_clientes = pd.DataFrame(columns=['Cliente']) 
 
             with col_cli2:
-                st.write("**Detalhamento de Tickets**")
-                
-                if not df_clientes_sprint.empty:
-                    lista_clientes = ["Todos"] + df_clientes['Cliente'].tolist()
-                    cliente_selecionado = st.selectbox("Selecione o Cliente para detalhar:", lista_clientes)
+                    st.write("**Detalhamento de Tickets**")
+                    
+                    if not df_clientes_sprint.empty:
+                        lista_clientes = ["Todos"] + df_clientes['Cliente'].tolist()
+                        cliente_selecionado = st.selectbox("Selecione o Cliente para detalhar:", lista_clientes)
 
-                    if cliente_selecionado != "Todos":
-                        df_detalhe_cliente = df_clientes_sprint[df_clientes_sprint['cliente'] == cliente_selecionado].copy()
-                    else:
-                        df_detalhe_cliente = df_clientes_sprint.copy()
+                        if cliente_selecionado != "Todos":
+                            df_detalhe_cliente = df_clientes_sprint[df_clientes_sprint['cliente'] == cliente_selecionado].copy()
+                        else:
+                            df_detalhe_cliente = df_clientes_sprint.copy()
+
+                        df_detalhe_cliente['link'] = "https://ddsinfo.atlassian.net/browse/" + df_detalhe_cliente['issue_key']
+                        
+                    df_detalhe_cliente.columns = df_detalhe_cliente.columns.str.lower()
+                    if 'status' not in df_detalhe_cliente.columns:
+                        df_detalhe_cliente['status'] = 'aguardando sincronizacao'
 
                     df_detalhe_cliente['link'] = "https://ddsinfo.atlassian.net/browse/" + df_detalhe_cliente['issue_key']
-                    
+
                     st.dataframe(
-                        df_detalhe_cliente[['issue_key', 'resumo', 'tipo_item', 'responsavel', 'link']], 
+                        df_detalhe_cliente[['issue_key', 'resumo', 'status', 'tipo_item', 'responsavel', 'link']], 
                         use_container_width=True, hide_index=True,
                         column_config={
                             "issue_key": "Chave",
                             "resumo": st.column_config.TextColumn("Resumo", width="large"),
+                            "status": "Status",
                             "tipo_item": "Tipo", 
                             "responsavel": "Responsável", 
                             "link": st.column_config.LinkColumn("Jira")
                         }
                     )
-                else:
-                    st.write("Sem tickets para detalhar.")
+                    
         else:
             st.info("Nenhum item encontrado no backlog para exibir clientes.")
 
