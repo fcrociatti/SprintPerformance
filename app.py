@@ -136,7 +136,7 @@ with aba_historico:
                 
                 
                
-                st.write("**📊 Evolução de Entregas por Desenvolvedor**")
+                st.write("**Evolução de Entregas por Desenvolvedor**")
                     
                 df_agrupado_hist = df_hist.groupby(['descricao', 'data_inicio', 'responsavel'])['pontos'].sum().reset_index()
                     
@@ -163,7 +163,7 @@ with aba_historico:
                 else:
                         st.info("Nenhum dado encontrado para gerar o gráfico histórico.")
                 
-                st.write("**🏆 Ranking Acumulado no Período**")
+                st.write("**Ranking Acumulado no Período**")
                 df_rank_hist = df_hist.groupby('responsavel')['pontos'].sum().reset_index()
                 df_rank_hist = df_rank_hist[df_rank_hist['pontos'] > 0].sort_values(by='pontos', ascending=False)
                     
@@ -641,7 +641,7 @@ with aba_dashboard:
                         text_donut = base_donut.mark_text(radius=120, color='white').encode(text="quantidade:Q", order=alt.Order("quantidade:Q", sort="descending"))
                         st.altair_chart((donut + text_donut).properties(height=250), use_container_width=True, theme="streamlit")
 
-                        with st.expander("📋 Detalhes de itens da Gestão"):
+                        with st.expander(" Detalhes de itens da Gestão"):
                             gestor_selecionado = st.selectbox(
                                 "Filtrar tarefas de:", 
                                 [ "Todos da Equipe","Sergio", "Eder", "Daniel"],
@@ -656,12 +656,13 @@ with aba_dashboard:
                             if not df_detalhe.empty:
                                 df_detalhe['link'] = "https://ddsinfo.atlassian.net/browse/" + df_detalhe['issue_key']
                                 st.dataframe(
-                                    df_detalhe[['issue_key', 'responsavel', 'tipo_item', 'link']], 
+                                    df_detalhe[['issue_key','resumo',  'responsavel', 'tipo_item', 'link']], 
                                     hide_index=True,
                                     use_container_width=True,
                                     column_config={
                                         "issue_key": "Chave",
-                                        "responsavel": "Analista",
+                                        "resumo" : "Resumo",
+                                        "responsavel": "Gestor",
                                         "tipo_item": "Tipo",
                                         "link": st.column_config.LinkColumn("Jira")
                                     }
@@ -695,7 +696,7 @@ with aba_dashboard:
                         st.altair_chart((bar_comp + label_comp).properties(height=200), use_container_width=True, theme="streamlit")
                         
                        
-                        with st.expander("📋 Detalhes de itens da Equipe de Análise"):
+                        with st.expander(" Detalhes de itens da Equipe de Análise"):
                             analista_selecionado = st.selectbox(
                                 "Filtrar tarefas de:", 
                                 ["Todos da Equipe", "Anderson", "Fernando", "Gustavo", "Nathan"],
@@ -710,11 +711,12 @@ with aba_dashboard:
                             if not df_detalhe.empty:
                                 df_detalhe['link'] = "https://ddsinfo.atlassian.net/browse/" + df_detalhe['issue_key']
                                 st.dataframe(
-                                    df_detalhe[['issue_key', 'responsavel', 'tipo_item', 'link']], 
+                                    df_detalhe[['issue_key','resumo' , 'responsavel', 'tipo_item', 'link']], 
                                     hide_index=True,
                                     use_container_width=True,
                                     column_config={
                                         "issue_key": "Chave",
+                                        "resumo" : "Resumo",
                                         "responsavel": "Analista",
                                         "tipo_item": "Tipo",
                                         "link": st.column_config.LinkColumn("Jira")
@@ -740,10 +742,12 @@ with aba_dashboard:
                 
                 tabela_backlog['link'] = "https://ddsinfo.atlassian.net/browse/" + tabela_backlog['issue_key']
                 st.dataframe(
-                    tabela_backlog[['issue_key', 'cliente', 'resumo', 'status', 'tipo_item', 'categoria', 'responsavel', 'link']], 
+                    tabela_backlog[['issue_key', 'sistema', 'cliente', 'resumo', 'status', 'tipo_item', 'categoria', 'responsavel', 'link']], 
                     use_container_width=True, hide_index=True,
                     column_config={
-                        "issue_key": "Chave", "cliente": "Cliente",
+                        "issue_key": "Chave", 
+                        "sistema": "Sistema", 
+                        "cliente": "Cliente",
                         "resumo": st.column_config.TextColumn("Resumo", width="large"),
                         "status": "Status",
                         "tipo_item": "Tipo", "categoria": "Categoria", "responsavel": "Responsável", 
@@ -811,10 +815,12 @@ with aba_dashboard:
                     tabela_detalhe['link'] = "https://ddsinfo.atlassian.net/browse/" + tabela_detalhe['issue_key']
                     
                     st.dataframe(
-                        tabela_detalhe[['issue_key', 'cliente', 'resumo', 'status', 'tipo_item', 'categoria', 'pontos', 'link']], 
+                        tabela_detalhe[['issue_key', 'sistema', 'cliente', 'resumo', 'status', 'tipo_item', 'categoria', 'pontos', 'link']], 
                         use_container_width=True, hide_index=True,
                         column_config={
-                            "issue_key": "Chave", "cliente": "Cliente",
+                            "issue_key": "Chave", 
+                            "sistema": "Sistema", 
+                            "cliente": "Cliente",
                             "resumo": st.column_config.TextColumn("Resumo", width="large"),
                             "status": "Status",
                             "tipo_item": "Tipo", "categoria": "Categoria", "pontos": "Pontos", 
@@ -825,10 +831,27 @@ with aba_dashboard:
             st.info("Nenhuma entrega contabilizada.")
 
         st.divider()
-        st.subheader("📉 Burndown da Sprint")
+        st.subheader(" Burndown da Sprint")
 
         if not df_backlog_filtrado.empty or not df_filtrado.empty:
-            total_tickets = len(df_backlog_filtrado) + len(df_filtrado)
+            
+            id_sprint = int(df_sprints[df_sprints['nome_exibicao'] == sprint_selecionada]['id'].iloc[0])
+            total_atual_pendentes = len(df_backlog_filtrado)
+            
+            itens_sust_hoje = len(df_backlog_filtrado[df_backlog_filtrado['categoria'] == 'Sustentação']) if not df_backlog_filtrado.empty else 0
+            itens_desv_hoje = len(df_backlog_filtrado[df_backlog_filtrado['categoria'] == 'Desenvolvimento']) if not df_backlog_filtrado.empty else 0
+
+            tickets_iniciais = total_atual_pendentes + len(df_filtrado) # Fallback padrão
+            sust_inicial = itens_sust_hoje
+            desv_inicial = itens_desv_hoje
+            
+            if 'df_snapshots' in locals() and not df_snapshots.empty:
+                snaps_sp = df_snapshots[df_snapshots['sprint_id'] == id_sprint].copy()
+                snaps_inicio = snaps_sp[snaps_sp['fase'] == 'INICIO']
+                if not snaps_inicio.empty:
+                    tickets_iniciais = snaps_inicio.iloc[-1]['qtd_total']
+                    sust_inicial = snaps_inicio.iloc[-1]['qtd_sust']
+                    desv_inicial = snaps_inicio.iloc[-1]['qtd_desv']
 
             data_ini_str = df_sprints[df_sprints['nome_exibicao'] == sprint_selecionada]['data_inicio'].iloc[0]
             data_fim_str = df_sprints[df_sprints['nome_exibicao'] == sprint_selecionada]['data_fim'].iloc[0]
@@ -839,29 +862,44 @@ with aba_dashboard:
             qtd_dias = (data_fim - data_ini).days + 1
             dias_sprint = [data_ini + timedelta(days=x) for x in range(qtd_dias)]
 
-            df_entregas_bd = df_filtrado.copy()
-            entregas_por_dia = {}
-            if not df_entregas_bd.empty:
-                df_entregas_bd['data_dt'] = pd.to_datetime(df_entregas_bd['data_conclusao']).dt.date
-                entregas_por_dia = df_entregas_bd.groupby('data_dt').size().to_dict()
+            dict_real_diario = {}
+            dict_sust_diario = {}
+            dict_desv_diario = {}
+            
+            if 'snaps_sp' in locals() and not snaps_sp.empty:
+                snaps_sp['data_dt'] = (pd.to_datetime(snaps_sp['data_registro']) - pd.Timedelta(hours=3)).dt.date
+                ultimo_snap_por_dia = snaps_sp.sort_values('data_registro').groupby('data_dt').last()
+                
+                dict_real_diario = ultimo_snap_por_dia['qtd_total'].to_dict()
+                dict_sust_diario = ultimo_snap_por_dia['qtd_sust'].to_dict()
+                dict_desv_diario = ultimo_snap_por_dia['qtd_desv'].to_dict()
 
             bd_dados = []
-            real_restante = total_tickets
-            passo_ideal = total_tickets / (qtd_dias - 1) if qtd_dias > 1 else 0
+            passo_ideal = tickets_iniciais / (qtd_dias - 1) if qtd_dias > 1 else 0
             hoje = datetime.now().date()
+            
+            ultimo_valor_conhecido = tickets_iniciais
+            ultimo_sust = sust_inicial
+            ultimo_desv = desv_inicial
 
             for i, dia in enumerate(dias_sprint):
-                ideal_restante = total_tickets - (passo_ideal * i)
+                ideal_restante = tickets_iniciais - (passo_ideal * i)
 
-                entregues_hoje = entregas_por_dia.get(dia, 0)
-                real_restante = real_restante - entregues_hoje
-
-                linha_real = real_restante if dia <= hoje else None
+                if dia == hoje:
+                    ultimo_valor_conhecido = total_atual_pendentes
+                    ultimo_sust = itens_sust_hoje
+                    ultimo_desv = itens_desv_hoje
+                elif dia in dict_real_diario:
+                    ultimo_valor_conhecido = dict_real_diario[dia]
+                    ultimo_sust = dict_sust_diario[dia]
+                    ultimo_desv = dict_desv_diario[dia]
 
                 bd_dados.append({
                     "Data": dia.strftime("%d/%m"),
                     "Diretriz": round(ideal_restante, 1),
-                    "Trabalho Restante": linha_real
+                    "Trabalho Restante": ultimo_valor_conhecido if dia <= hoje else None,
+                    "Sustentação": ultimo_sust if dia <= hoje else None,
+                    "Desenvolvimento": ultimo_desv if dia <= hoje else None
                 })
 
             df_burndown = pd.DataFrame(bd_dados)
@@ -877,7 +915,7 @@ with aba_dashboard:
 
             linha_real = base.mark_line(color='#4CA6FF', point=True, strokeWidth=3).encode(
                 y=alt.Y('Trabalho Restante:Q'),
-                tooltip=['Data', 'Trabalho Restante']
+                tooltip=['Data', 'Trabalho Restante', 'Sustentação', 'Desenvolvimento']
             )
 
             grafico_burndown = (linha_ideal + linha_real).properties(height=350)
@@ -886,9 +924,8 @@ with aba_dashboard:
         else:
             st.info("Sem dados suficientes para gerar o Burndown.")
 
-
         st.divider()
-        st.subheader("🏢 Itens por Cliente (Planning)")
+        st.subheader("Itens por Cliente (Planning)")
 
         if not df_backlog_filtrado.empty:
             
@@ -956,10 +993,11 @@ with aba_dashboard:
                     df_detalhe_cliente['link'] = "https://ddsinfo.atlassian.net/browse/" + df_detalhe_cliente['issue_key']
 
                     st.dataframe(
-                        df_detalhe_cliente[['issue_key', 'resumo', 'status', 'tipo_item', 'responsavel', 'link']], 
+                        df_detalhe_cliente[['issue_key', 'sistema', 'resumo', 'status', 'tipo_item', 'responsavel', 'link']], 
                         use_container_width=True, hide_index=True,
                         column_config={
                             "issue_key": "Chave",
+                            "sistema": "Sistema",
                             "resumo": st.column_config.TextColumn("Resumo", width="large"),
                             "status": "Status",
                             "tipo_item": "Tipo", 
@@ -967,6 +1005,120 @@ with aba_dashboard:
                             "link": st.column_config.LinkColumn("Jira")
                         }
                     )
+
+            st.divider()
+            st.subheader(" Itens por Sistema")
+
+            frames = []
+            if not df_backlog_filtrado.empty: frames.append(df_backlog_filtrado)
+            if not df_filtrado.empty: frames.append(df_filtrado)
+
+            if frames:
+                df_sistemas_sprint = pd.concat(frames, ignore_index=True)
+                
+                if 'sistema' in df_sistemas_sprint.columns:
+                    df_sistemas_sprint['sistema'] = df_sistemas_sprint['sistema'].fillna("Não preenchido")
+                    df_sistemas_sprint['sistema'] = df_sistemas_sprint['sistema'].apply(lambda x: "Não preenchido" if str(x).strip() in ["", "None", "nan"] else x)
+                    
+                    df_grafico_sistema = df_sistemas_sprint.groupby('sistema').size().reset_index(name='quantidade')
+                    df_grafico_sistema = df_grafico_sistema.sort_values(by='quantidade', ascending=False)
+                    
+                    col_sys1, col_sys2 = st.columns([2, 3])
+                    
+                    with col_sys1:
+                        base_pizza = alt.Chart(df_grafico_sistema).encode(
+                            theta=alt.Theta("quantidade:Q", stack=True),
+                            color=alt.Color("sistema:N", title="Sistema", scale=alt.Scale(scheme="category20"))
+                        )
+                        pizza = base_pizza.mark_arc(outerRadius=120)
+                        textos = base_pizza.mark_text(radius=145, size=15, color="white").encode(text="quantidade:Q")
+                        
+                        st.altair_chart((pizza + textos).properties(height=320), use_container_width=True, theme="streamlit")
+                        
+                    with col_sys2:
+                        st.write("**Detalhamento de Volumes por Sistema**")
+                        
+                        total_sys = df_grafico_sistema['quantidade'].sum()
+                        df_grafico_sistema['porcentagem'] = (df_grafico_sistema['quantidade'] / total_sys) * 100
+                        
+                        st.dataframe(
+                            df_grafico_sistema,
+                            use_container_width=True,
+                            hide_index=True,
+                            column_config={
+                                "sistema": "Nome do Sistema",
+                                "quantidade": "Qtd de Itens",
+                                "porcentagem": st.column_config.ProgressColumn(
+                                    "% do Total",
+                                    format="%d%%",
+                                    min_value=0,
+                                    max_value=100,
+                                ),
+                            }
+                        )
+                else:
+                    st.warning("Coluna 'sistema' não disponível para montar o gráfico.")
+            else:
+                st.info("Nenhum dado encontrado para analisar os sistemas.")
+
+            st.divider()
+            st.subheader("Itens por Status")
+
+            frames_status = []
+            if not df_backlog_filtrado.empty: frames_status.append(df_backlog_filtrado)
+            if not df_filtrado.empty: frames_status.append(df_filtrado)
+
+            if frames_status:
+                df_status_sprint = pd.concat(frames_status, ignore_index=True)
+                
+                if 'status' in df_status_sprint.columns:
+                    df_status_sprint['status'] = df_status_sprint['status'].fillna("Desconhecido")
+                    
+                    df_grafico_status = df_status_sprint.groupby('status').size().reset_index(name='quantidade')
+                    
+                    df_grafico_status = df_grafico_status.sort_values(by='status', ascending=True)
+                    
+                    col_st1, col_st2 = st.columns([3, 2])
+                    
+                    with col_st1:
+                        altura_status = max(320, len(df_grafico_status) * 30)
+
+                        barras_status = alt.Chart(df_grafico_status).mark_bar(color='#4CA6FF', cornerRadiusEnd=4).encode(
+                            x=alt.X('quantidade:Q', title='Quantidade de Itens', axis=alt.Axis(grid=False)),
+                            y=alt.Y('status:N', sort='ascending', title=''),
+                            tooltip=['status', 'quantidade']
+                        )
+                        
+                        textos_status = barras_status.mark_text(align='left', baseline='middle', dx=3, color='white').encode(text='quantidade:Q')
+                        
+                        st.altair_chart((barras_status + textos_status).properties(height=altura_status), use_container_width=True, theme="streamlit")
+                        
+                    with col_st2:
+                        st.write("**Distribuição do Fluxo**")
+                        
+                        total_st = df_grafico_status['quantidade'].sum()
+                        df_grafico_status['porcentagem'] = (df_grafico_status['quantidade'] / total_st) * 100
+                        
+                        st.dataframe(
+                            df_grafico_status,
+                            use_container_width=True,
+                            hide_index=True,
+                            column_config={
+                                "status": "Fase (Status)",
+                                "quantidade": "Qtd",
+                                "porcentagem": st.column_config.ProgressColumn(
+                                    "% do Total",
+                                    format="%d%%",
+                                    min_value=0,
+                                    max_value=100,
+                                ),
+                            }
+                        )
+                else:
+                    st.warning("A coluna 'status' não está disponível para gerar o gráfico.")
+            else:
+                st.info("Nenhum dado encontrado para analisar os status.")
+    
                     
         else:
             st.info("Nenhum item encontrado no backlog para exibir clientes.")
