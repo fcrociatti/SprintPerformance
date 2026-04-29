@@ -18,7 +18,7 @@ CUSTOM_CLIENTE_FIELD = "customfield_10133"
 
 TIPOS_SUSTENTACAO = ["erro", "atendimento","Retorno Negativo (RN)"]
 status_alvo = [
-    "3.3 Revisão de Código","4.0 A testar", "4.2 Mergear", "4.3 Pend. Versão",
+    "3.3 Revisão de Código","4.0 A TESTAR", "4.2 Mergear", "4.3 Pend. Versão",
     "4.4 A Testar (homologação)", "4.5 A testar (artefato)",
     "5.3 Pendência de Homolog", "6.0 Concluído",
     "6.1 Pend. Gerar Artefatos", "6.2 Pend. Envio Homolog."
@@ -75,11 +75,15 @@ def obter_dados_projeto(projeto):
             changelog = issue.get("changelog", {}).get("histories", [])
             data_transicao = None
 
-            for hist in sorted(changelog, key=lambda x: x["created"]):
+            status_alvo_lower = [s.lower() for s in status_alvo]
+
+            for hist in sorted(changelog, key=lambda x: x["created"], reverse=True):
                 for item in hist.get("items", []):
-                    if item["field"] == "status" and item["toString"] in status_alvo:
-                        data_transicao = datetime.fromisoformat(hist["created"].replace("Z", "+00:00"))
-                        break
+                    if item["field"] == "status":
+                        status_str = item.get("toString", "").lower()
+                        if status_str in status_alvo_lower:
+                            data_transicao = datetime.fromisoformat(hist["created"].replace("Z", "+00:00"))
+                            break
                 if data_transicao: break
 
             if not data_transicao: continue
@@ -198,7 +202,7 @@ def extrair_e_salvar_backlog(projeto, sprint_id):
     jql_backlog = (
         f'type not in( bug , Ajuste)  AND project in ("{projeto}") '
         f'AND Sprint in (openSprints(),EMPTY) '
-        f'AND status NOT IN ("6.0 Concluído", "6.0 Pend. Merge p/ Homol.", "6.1 Pend. Gerar Artefatos", "6.2 Pend. Envio Homolog.", "7.0 Dispensado", "5.0 Pendência do Usuário", "5.1 Esperando por Aprovação", "5.2 Comercial - Aprovado", "5.3 Pendência de Homolog", "3.3 Revisão de Código", "4.0 A testar", "4.1 Testando", "4.2 Mergear", "4.3 Pend. Versão") '
+        f'AND status NOT IN ("6.0 Concluído", "6.0 Pend. Merge p/ Homol.", "6.1 Pend. Gerar Artefatos", "6.2 Pend. Envio Homolog.", "7.0 Dispensado", "5.0 Pendência do Usuário", "5.1 Esperando por Aprovação", "5.2 Comercial - Aprovado", "5.3 Pendência de Homolog", "3.3 Revisão de Código", "4.0 A TESTAR", "4.1 Testando", "4.2 Mergear", "4.3 Pend. Versão") '
         f'ORDER BY created DESC'
     )
 
