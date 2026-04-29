@@ -19,7 +19,7 @@ CUSTOM_CLIENTE_FIELD = "customfield_10133"
 TIPOS_SUSTENTACAO = ["erro", "atendimento","Retorno Negativo (RN)"]
 status_alvo = [
     "3.3 Revisão de Código","4.0 A TESTAR", "4.2 Mergear", "4.3 Pend. Versão",
-    "4.4 A Testar (homologação)", "4.5 A testar (artefato)",
+    "4.4 A Testar (homologação)", "4.5 A testar (artefato)", "3.2 Reprovados",
     "5.3 Pendência de Homolog", "6.0 Concluído",
     "6.1 Pend. Gerar Artefatos", "6.2 Pend. Envio Homolog."
 ]
