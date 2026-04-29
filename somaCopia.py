@@ -117,6 +117,20 @@ def obter_dados_projeto(projeto):
             status_nome = status_info["name"] if status_info else "Desconhecido"
 
             sistema_nome = extrair_sistema(issue["fields"])            
+
+            campo_data_existente = issue["fields"].get(CUSTOM_DATE_FIELD)
+            precisa_atualizar = False
+
+            if campo_data_existente:
+                data_existente_str = campo_data_existente.split("T")[0]
+                data_esperada_str = periodo_inicio.strftime("%Y-%m-%d")
+                
+                
+                if data_existente_str != data_esperada_str:
+                    continue 
+            else:
+                precisa_atualizar = True
+
             dados.append({
                 "Key": key, 
                 "Data_Transicao": data_transicao.strftime("%Y-%m-%d %H:%M:%S"), 
@@ -132,17 +146,6 @@ def obter_dados_projeto(projeto):
 
             data_iso = periodo_inicio.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "+0000"
 
-            campo_data_existente = issue["fields"].get(CUSTOM_DATE_FIELD)
-            precisa_atualizar = False
-
-            if campo_data_existente is None:
-                precisa_atualizar = True
-            else:
-                data_existente_str = campo_data_existente.split("T")[0]
-                data_esperada_str = periodo_inicio.strftime("%Y-%m-%d")
-                if data_existente_str != data_esperada_str:
-                    precisa_atualizar = True
-
             if precisa_atualizar:
                 payload = {
                     "fields": {
@@ -155,6 +158,18 @@ def obter_dados_projeto(projeto):
                     auth=auth,
                     json=payload
                 )
+
+                if 'logs_jira' not in st.session_state:
+                    st.session_state['logs_jira'] = []
+
+                if update_resp.status_code == 204:
+                    msg = (f"✅ Jira Atualizado: Issue {key} recebeu a data {data_iso}")
+                    print(msg)
+                    st.session_state['logs_jira'].append(msg)
+                else:
+                    msg = (f"❌ Falha ao atualizar Jira ({key}): {update_resp.text}")
+                    print(msg)
+                    st.session_state['logs_jira'].append(msg)
 
                 if 'logs_jira' not in st.session_state:
                     st.session_state['logs_jira'] = []
