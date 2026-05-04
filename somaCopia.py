@@ -73,20 +73,23 @@ def obter_dados_projeto(projeto):
         for issue in data_json["issues"]:
             key = issue["key"]
             changelog = issue.get("changelog", {}).get("histories", [])
-            data_transicao = None
-
+            
             status_alvo_lower = [s.lower() for s in status_alvo]
+
+            datas_entrada_alvo = []
 
             for hist in sorted(changelog, key=lambda x: x["created"], reverse=True):
                 for item in hist.get("items", []):
                     if item["field"] == "status":
                         status_str = item.get("toString", "").lower()
                         if status_str in status_alvo_lower:
-                            data_transicao = datetime.fromisoformat(hist["created"].replace("Z", "+00:00"))
-                            break
-                if data_transicao: break
+                            dt = datetime.fromisoformat(hist["created"].replace("Z", "+00:00"))
+                            datas_entrada_alvo.append(dt)
 
-            if not data_transicao: continue
+            if datas_entrada_alvo:
+                data_transicao = min(datas_entrada_alvo) 
+            else:
+                continue 
 
             periodo_sprint = None
             periodo_inicio = None
@@ -171,18 +174,7 @@ def obter_dados_projeto(projeto):
                     print(msg)
                     st.session_state['logs_jira'].append(msg)
 
-                if 'logs_jira' not in st.session_state:
-                    st.session_state['logs_jira'] = []
-
-                if update_resp.status_code == 204:
-                    msg = (f"✅ Jira Atualizado: Issue {key} recebeu a data {data_iso}")
-                    print(msg)
-                    st.session_state['logs_jira'].append(msg)
-                else:
-                    
-                    msg = (f"❌ Falha ao atualizar Jira ({key}): {update_resp.text}")
-                    print(msg)
-                    st.session_state['logs_jira'].append(msg)
+            
 
         if data_json.get("isLast") or not data_json.get("issues", []): break
         next_token = data_json.get("nextPageToken")
