@@ -291,8 +291,30 @@ def extrair_e_salvar_backlog(projeto, sprint_id):
         except Exception as e:
             print(f"❌ Erro ao salvar backlog no MySQL: {e}")
 
+
+
 def sincronizar_com_banco(dados_extracao, projeto_nome, sprint_id):
+    # =========================================================
+    # 1. LIMPEZA DOS DADOS FANTASMAS ANTES DA INSERÇÃO
+    # =========================================================
+    try:
+        with conn.session as s:
+            # Apaga os itens APENAS desta sprint e APENAS deste projeto 
+            # (para que o STAR não apague os dados do ELFA e vice-versa)
+            s.execute(
+                text("DELETE FROM TB_SPRINT_DETAILS WHERE ID_SPRINT = :id AND PROJETO = :projeto"), 
+                {"id": sprint_id, "projeto": projeto_nome}
+            )
+            s.commit()
+    except Exception as e:
+        print(f"❌ Erro ao limpar dados antigos na TB_SPRINT_DETAILS: {e}")
+
+    # Se a extração não trouxe nada (sprint vazia), para por aqui
     if not dados_extracao: return
+    
+    # =========================================================
+    # 2. INSERÇÃO DOS DADOS CORRETOS
+    # =========================================================
     payload = []
     for item in dados_extracao:
         payload.append({
@@ -308,7 +330,6 @@ def sincronizar_com_banco(dados_extracao, projeto_nome, sprint_id):
             "CLIENTE": item["Cliente"],
             "STATUS": item.get("Status", "Desconhecido"),
             "SISTEMA": item["Sistema"]
-
         })
     
     try:
