@@ -33,7 +33,8 @@ def carregar_issues():
         SELECT ID_SPRINT_DETAILS as id, ISSUE_KEY as issue_key, PROJETO as projeto, 
                RESPONSAVEL as responsavel, TIPO_ITEM as tipo_item, CATEGORIA as categoria, 
                PONTOS as pontos, DATA_CONCLUSAO as data_conclusao, ID_SPRINT as sprint_id, 
-               CLIENTE as cliente, RESUMO as resumo, STATUS as status, SISTEMA as sistema
+               CLIENTE as cliente, RESUMO as resumo, STATUS as status, SISTEMA as sistema,
+               DATA_LIMITE as data_limite
         FROM TB_SPRINT_DETAILS
     """
     return conn.query(query)
@@ -69,7 +70,8 @@ def carregar_backlog():
         SELECT ID_SPRINT_BACKLOG as id, ID_SPRINT as sprint_id, ISSUE_KEY as issue_key, 
                PROJETO as projeto, RESPONSAVEL as responsavel, PAPEL as papel, 
                TIPO_ITEM as tipo_item, CLIENTE as cliente, RESUMO as resumo, 
-               DATA_CRIACAO as data_criacao, STATUS as status, SISTEMA as sistema
+               DATA_CRIACAO as data_criacao, STATUS as status, SISTEMA as sistema,
+               DATA_LIMITE as data_limite
         FROM TB_SPRINT_BACKLOG
     """
     return conn.query(query)
@@ -115,6 +117,14 @@ with aba_historico:
                 devs_com_numero = [dev for dev in devs_disp_hist if str(dev)[0].isdigit()]
                 
                 devs_selecionados_hist = col_f2.multiselect("2. Filtrar Desenvolvedores:", devs_disp_hist, default=devs_com_numero)
+                
+                # ========================================================
+                # CORREÇÃO AQUI: Aplicar o filtro no DataFrame df_hist
+                # ========================================================
+                if devs_selecionados_hist:
+                    df_hist = df_hist[df_hist['responsavel'].isin(devs_selecionados_hist)]
+                else:
+                    df_hist = pd.DataFrame()
             
         if not df_hist.empty:
                 total_periodo = df_hist['pontos'].sum()
@@ -223,9 +233,7 @@ with aba_sincronizacao:
     acao = st.radio("O que deseja fazer?", ["Cadastrar Nova Sprint", "Atualizar Sprint Existente"], horizontal=True)
     st.divider()
 
-    # ---------------------------------------------------------
-    # PARTE 1: CADASTRAR NOVA SPRINT (Onde entra o "INICIO")
-    # ---------------------------------------------------------
+    
     if acao == "Cadastrar Nova Sprint":
         st.write("Defina a identificação e o intervalo da nova Sprint.")
         with st.form("form_sync_nova"):
@@ -234,7 +242,6 @@ with aba_sincronizacao:
             dt_inicio = col1.date_input("Data de Início da Sprint")
             dt_fim = col2.date_input("Data de Fim da Sprint", value=dt_inicio + timedelta(days=13))
             
-            # NOVO CAMPO AQUI TAMBÉM
             desc_snapshot_nova = st.text_input("Observação para o Log (Opcional):", placeholder="Ex: Carga inicial após a Planning")
             
             btn_sincronizar = st.form_submit_button("🚀 Iniciar Busca no Jira")
@@ -278,7 +285,7 @@ with aba_sincronizacao:
                                 st.error(f"❌ Falha: {mensagem}")
 
     # ---------------------------------------------------------
-    # PARTE 2: ATUALIZAR SPRINT (Onde entra o row_sprint e o Checkbox)
+    # PARTE 2: ATUALIZAR SPRINT 
     # ---------------------------------------------------------
     else:
         st.write("Busque os dados mais recentes de uma Sprint que já está no banco.")
@@ -413,7 +420,6 @@ with aba_dashboard:
         else: 
             df_backlog_filtrado = pd.DataFrame()
 
-        # --- ALARME DE DIAGNÓSTICO (Aparece apenas se der erro) ---
         if df_backlog_filtrado.empty:
             if df_backlog.empty:
                 st.error("⚠️ DIAGNÓSTICO 1: O Python não encontrou NENHUM dado na tabela TB_SPRINT_BACKLOG. Limpe o Cache no topo direito ou atualize a sprint na aba 'Gerenciar Sprints'.")
@@ -421,9 +427,8 @@ with aba_dashboard:
                 st.error(f"⚠️ DIAGNÓSTICO 2: O Banco tem {len(df_backlog)} itens pendentes, mas o Pandas não achou nenhum para a {sprint_selecionada}!")
                 st.write(f"ID esperado na Tela: **{id_sprint_selecionada}**")
                 st.write(f"IDs que realmente vieram no Banco: **{df_backlog['sprint_id'].unique()}**")
-        # -----------------------------------------------------------
 
-        st.subheader(f"📋 Visão Geral da {sprint_selecionada.split(' - ')[0]} (Itens pendentes)")
+        st.subheader(f" Visão Geral da {sprint_selecionada.split(' - ')[0]} (Itens pendentes)")
         
         if not df_backlog_filtrado.empty:
             tipos_sustentacao = ["erro", "atendimento", "retorno negativo (rn)"]
@@ -831,7 +836,7 @@ with aba_dashboard:
             st.info("Nenhuma entrega contabilizada.")
 
         st.divider()
-        st.subheader(" Burndown da Sprint")
+        st.subheader("📉 Burndown da Sprint")
 
         if not df_backlog_filtrado.empty or not df_filtrado.empty:
             
@@ -874,6 +879,13 @@ with aba_dashboard:
                 dict_sust_diario = ultimo_snap_por_dia['qtd_sust'].to_dict()
                 dict_desv_diario = ultimo_snap_por_dia['qtd_desv'].to_dict()
 
+            
+            dict_concluidos_diario = {}
+            if not df_filtrado.empty:
+                df_filtrado_copy = df_filtrado.copy()
+                df_filtrado_copy['data_conclusao_dt'] = pd.to_datetime(df_filtrado_copy['data_conclusao']).dt.date
+                dict_concluidos_diario = df_filtrado_copy.groupby('data_conclusao_dt').size().to_dict()
+
             bd_dados = []
             passo_ideal = tickets_iniciais / (qtd_dias - 1) if qtd_dias > 1 else 0
             hoje = datetime.now().date()
@@ -881,6 +893,8 @@ with aba_dashboard:
             ultimo_valor_conhecido = tickets_iniciais
             ultimo_sust = sust_inicial
             ultimo_desv = desv_inicial
+            
+            total_concluidos_acumulado = 0 
 
             for i, dia in enumerate(dias_sprint):
                 ideal_restante = tickets_iniciais - (passo_ideal * i)
@@ -894,12 +908,20 @@ with aba_dashboard:
                     ultimo_sust = dict_sust_diario[dia]
                     ultimo_desv = dict_desv_diario[dia]
 
+                
+                concluidos_hoje = dict_concluidos_diario.get(dia, 0)
+                
+                if dia <= hoje:
+                    total_concluidos_acumulado += concluidos_hoje
+
                 bd_dados.append({
                     "Data": dia.strftime("%d/%m"),
                     "Diretriz": round(ideal_restante, 1),
                     "Trabalho Restante": ultimo_valor_conhecido if dia <= hoje else None,
                     "Sustentação": ultimo_sust if dia <= hoje else None,
-                    "Desenvolvimento": ultimo_desv if dia <= hoje else None
+                    "Desenvolvimento": ultimo_desv if dia <= hoje else None,
+                    "Concluídos Acumulados": total_concluidos_acumulado if dia <= hoje else None,
+                    "Concluídos no Dia": concluidos_hoje if dia <= hoje else None
                 })
 
             df_burndown = pd.DataFrame(bd_dados)
@@ -909,7 +931,7 @@ with aba_dashboard:
             )
 
             linha_ideal = base.mark_line(color='gray', strokeDash=[5, 5]).encode(
-                y=alt.Y('Diretriz:Q', title="Tickets Restantes"),
+                y=alt.Y('Diretriz:Q', title="Quantidade de Itens"),
                 tooltip=['Data', 'Diretriz']
             )
 
@@ -917,12 +939,52 @@ with aba_dashboard:
                 y=alt.Y('Trabalho Restante:Q'),
                 tooltip=['Data', 'Trabalho Restante', 'Sustentação', 'Desenvolvimento']
             )
+            
+           
+            linha_concluidos = base.mark_line(color='#28A745', point=True, strokeWidth=3).encode(
+                y=alt.Y('Concluídos Acumulados:Q'),
+                tooltip=['Data', 'Concluídos Acumulados', 'Concluídos no Dia']
+            )
 
-            grafico_burndown = (linha_ideal + linha_real).properties(height=350)
+            grafico_burndown = (linha_ideal + linha_real + linha_concluidos).properties(height=350)
             st.altair_chart(grafico_burndown, use_container_width=True, theme="streamlit")
+            
+            
+            with st.expander("📅 Prova de Coerência: Ver itens entregues por dia", expanded=False):
+                if not df_filtrado.empty:
+                    df_auditoria = df_filtrado.copy()
+                    
+                    df_auditoria['Data da Entrega'] = pd.to_datetime(df_auditoria['data_conclusao']).dt.strftime('%d/%m/%Y')
+                    
+                    df_auditoria = df_auditoria.sort_values('data_conclusao')
+                    
+                    df_auditoria['link'] = "https://ddsinfo.atlassian.net/browse/" + df_auditoria['issue_key']
+                    
+                    dias_com_entrega = ["Todos os Dias"] + df_auditoria['Data da Entrega'].unique().tolist()
+                    dia_selecionado = st.selectbox("Filtrar por dia específico:", dias_com_entrega)
+                    
+                    if dia_selecionado != "Todos os Dias":
+                        df_auditoria = df_auditoria[df_auditoria['Data da Entrega'] == dia_selecionado]
+                    
+                    st.dataframe(
+                        df_auditoria[['Data da Entrega', 'issue_key', 'resumo', 'responsavel', 'pontos', 'link']],
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config={
+                            "Data da Entrega": "Data de Conclusão",
+                            "issue_key": "Chave",
+                            "resumo": st.column_config.TextColumn("Resumo da Tarefa", width="large"),
+                            "responsavel": "Desenvolvedor",
+                            "pontos": st.column_config.NumberColumn("Pontos", format="%d"),
+                            "link": st.column_config.LinkColumn("Jira")
+                        }
+                    )
+                else:
+                    st.info("Nenhum item foi concluído nesta sprint ainda.")
             
         else:
             st.info("Sem dados suficientes para gerar o Burndown.")
+            
 
         st.divider()
         st.subheader("Itens por Cliente (Planning)")
@@ -1005,6 +1067,50 @@ with aba_dashboard:
                             "link": st.column_config.LinkColumn("Jira")
                         }
                     )
+
+
+            # ========================================================
+            # NOVO PAINEL: ALERTAS DE PRAZO (DATA LIMITE)
+            # ========================================================
+            st.markdown("####  Alertas de Prazo (Data Limite)")
+            df_alertas = df_backlog_filtrado.copy()
+            df_alertas['data_limite'] = pd.to_datetime(df_alertas['data_limite'])
+            hoje_ts = pd.Timestamp(datetime.now().date())
+
+            def definir_status_prazo(row):
+                if pd.isnull(row['data_limite']): return "⚪ Sem Prazo"
+                elif row['data_limite'].date() < hoje_ts.date(): return "🔴 Excedido"
+                elif (row['data_limite'].date() - hoje_ts.date()).days <= 3: return "🟡 Próximo (Até 3 dias)"
+                else: return "🟢 No Prazo"
+
+            df_alertas['Alerta'] = df_alertas.apply(definir_status_prazo, axis=1)
+            df_critico = df_alertas[df_alertas['Alerta'].isin(["🔴 Excedido", "🟡 Próximo (Até 3 dias)"])].copy()
+
+            if not df_critico.empty:
+                df_critico['Prazo'] = df_critico['data_limite'].dt.strftime('%d/%m/%Y')
+                
+                df_critico['link'] = "https://ddsinfo.atlassian.net/browse/" + df_critico['issue_key']
+                
+                st.dataframe(
+                    df_critico[['Alerta', 'link', 'cliente', 'resumo', 'responsavel', 'Prazo']],
+                    use_container_width=True, hide_index=True,
+                    column_config={
+                        "Alerta": st.column_config.TextColumn("Status", width="small"),
+                        
+                        "link": st.column_config.LinkColumn(
+                            "Chave", 
+                            display_text="https://ddsinfo.atlassian.net/browse/(.*)"
+                        ),
+                        
+                        "cliente": "Cliente",
+                        "resumo": "Tarefa",
+                        "responsavel": "Responsável",
+                        "Prazo": st.column_config.TextColumn("Data Limite", width="small")
+                    }
+                )
+            else:
+                st.success("✅ Nenhum item pendente com prazo excedido ou próximo do limite.")
+            st.divider()
 
             st.divider()
             st.subheader(" Itens por Sistema")
@@ -1112,6 +1218,31 @@ with aba_dashboard:
                                     min_value=0,
                                     max_value=100,
                                 ),
+                            }
+                        )
+                    
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    with st.expander("🔍 Auditoria: Ver os itens que compõem este gráfico", expanded=False):
+                        df_auditoria_status = df_status_sprint.copy()
+                        
+                        df_auditoria_status['link'] = "https://ddsinfo.atlassian.net/browse/" + df_auditoria_status['issue_key']
+                        
+                        lista_de_status = ["Todos"] + sorted(df_auditoria_status['status'].unique().tolist())
+                        status_selecionado = st.selectbox("Filtrar lista por Status:", lista_de_status)
+                        
+                        if status_selecionado != "Todos":
+                            df_auditoria_status = df_auditoria_status[df_auditoria_status['status'] == status_selecionado]
+                        
+                        st.dataframe(
+                            df_auditoria_status[['issue_key', 'resumo', 'status', 'responsavel', 'link']],
+                            use_container_width=True, 
+                            hide_index=True,
+                            column_config={
+                                "issue_key": "Chave",
+                                "resumo": st.column_config.TextColumn("Resumo", width="large"),
+                                "status": "Status no Banco",
+                                "responsavel": "Responsável",
+                                "link": st.column_config.LinkColumn("Abrir no Jira")
                             }
                         )
                 else:

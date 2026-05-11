@@ -14,7 +14,8 @@ JIRA_TOKEN = st.secrets["JIRA_TOKEN"]
 CUSTOM_SISTEMA_FIELD = "customfield_10079"
 CUSTOM_POINT_FIELD = "customfield_10069" 
 CUSTOM_DATE_FIELD = "customfield_10231" 
-CUSTOM_CLIENTE_FIELD = "customfield_10133" 
+CUSTOM_CLIENTE_FIELD = "customfield_10133"  
+
 
 TIPOS_SUSTENTACAO = ["erro", "atendimento","Retorno Negativo (RN)"]
 status_alvo = [
@@ -59,7 +60,7 @@ def obter_dados_projeto(projeto):
         
         
 
-        params = {"jql": jql, "fields": f"{CUSTOM_SISTEMA_FIELD},{CUSTOM_POINT_FIELD},{CUSTOM_DATE_FIELD},assignee,status,issuetype,summary,{CUSTOM_CLIENTE_FIELD},created", "expand": "changelog", "maxResults": 25}
+        params = {"jql": jql, "fields": f"{CUSTOM_SISTEMA_FIELD},{CUSTOM_POINT_FIELD},{CUSTOM_DATE_FIELD},assignee,status,issuetype,summary,{CUSTOM_CLIENTE_FIELD},duedate,created", "expand": "changelog", "maxResults": 25}
         
         if next_token: params["nextPageToken"] = next_token
         resp = requests.get(f"{JIRA_URL}/rest/api/3/search/jql", headers=headers, auth=auth, params=params, timeout=60)
@@ -119,7 +120,10 @@ def obter_dados_projeto(projeto):
             status_info = issue["fields"].get("status")
             status_nome = status_info["name"] if status_info else "Desconhecido"
 
-            sistema_nome = extrair_sistema(issue["fields"])            
+            sistema_nome = extrair_sistema(issue["fields"]) 
+
+            data_limite_raw = issue["fields"].get("duedate")
+            data_limite = data_limite_raw[:10] if data_limite_raw else None           
 
             campo_data_existente = issue["fields"].get(CUSTOM_DATE_FIELD)
             precisa_atualizar = False
@@ -144,7 +148,8 @@ def obter_dados_projeto(projeto):
                 "Resumo": resumo, 
                 "Cliente": cliente_nome,
                 "Status" : status_nome,
-                "Sistema" : sistema_nome
+                "Sistema" : sistema_nome,
+                "data_limite": data_limite
             })
 
             data_iso = periodo_inicio.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "+0000"
@@ -216,7 +221,7 @@ def extrair_e_salvar_backlog(projeto, sprint_id):
     while True:
         params = {
             "jql": jql_backlog,
-            "fields": f"assignee,issuetype,summary,{CUSTOM_CLIENTE_FIELD},{CUSTOM_SISTEMA_FIELD},created,status",
+            "fields": f"assignee,issuetype,summary,{CUSTOM_CLIENTE_FIELD},{CUSTOM_SISTEMA_FIELD},duedate,created,status",
             "maxResults": 25
         }
         
@@ -251,7 +256,10 @@ def extrair_e_salvar_backlog(projeto, sprint_id):
             status_nome = status_info["name"] if status_info else "Desconhecido"
 
             sistema_nome = extrair_sistema(issue["fields"])
-            
+
+            data_limite_raw = issue["fields"].get("duedate")
+            data_limite = data_limite_raw[:10] if data_limite_raw else None  
+
             dados_backlog.append({
                 "ID_SPRINT": sprint_id, 
                 "ISSUE_KEY": key,
@@ -263,7 +271,8 @@ def extrair_e_salvar_backlog(projeto, sprint_id):
                 "CLIENTE": cliente_nome, 
                 "DATA_CRIACAO" : data_criacao,
                 "STATUS": status_nome, 
-                "SISTEMA" :  sistema_nome
+                "SISTEMA" :  sistema_nome,
+                "DATA_LIMITE": data_limite
             })
 
         if data_json.get("isLast") or not data_json.get("issues", []): break
@@ -278,9 +287,9 @@ def extrair_e_salvar_backlog(projeto, sprint_id):
             
             query = text("""
                 INSERT INTO TB_SPRINT_BACKLOG 
-                (ID_SPRINT, ISSUE_KEY, PROJETO, RESPONSAVEL, PAPEL, TIPO_ITEM, RESUMO, CLIENTE, DATA_CRIACAO, STATUS, SISTEMA)
+                (ID_SPRINT, ISSUE_KEY, PROJETO, RESPONSAVEL, PAPEL, TIPO_ITEM, RESUMO, CLIENTE, DATA_CRIACAO, STATUS, SISTEMA, DATA_LIMITE)
                 VALUES 
-                (:ID_SPRINT, :ISSUE_KEY, :PROJETO, :RESPONSAVEL, :PAPEL, :TIPO_ITEM, :RESUMO, :CLIENTE, :DATA_CRIACAO, :STATUS, :SISTEMA)
+                (:ID_SPRINT, :ISSUE_KEY, :PROJETO, :RESPONSAVEL, :PAPEL, :TIPO_ITEM, :RESUMO, :CLIENTE, :DATA_CRIACAO, :STATUS, :SISTEMA, :DATA_LIMITE)
             """)
             with conn.session as s:
                 s.execute(query, dados_backlog)
@@ -294,27 +303,9 @@ def extrair_e_salvar_backlog(projeto, sprint_id):
 
 
 def sincronizar_com_banco(dados_extracao, projeto_nome, sprint_id):
-    # =========================================================
-    # 1. LIMPEZA DOS DADOS FANTASMAS ANTES DA INSERÇÃO
-    # =========================================================
-    try:
-        with conn.session as s:
-            # Apaga os itens APENAS desta sprint e APENAS deste projeto 
-            # (para que o STAR não apague os dados do ELFA e vice-versa)
-            s.execute(
-                text("DELETE FROM TB_SPRINT_DETAILS WHERE ID_SPRINT = :id AND PROJETO = :projeto"), 
-                {"id": sprint_id, "projeto": projeto_nome}
-            )
-            s.commit()
-    except Exception as e:
-        print(f"❌ Erro ao limpar dados antigos na TB_SPRINT_DETAILS: {e}")
-
-    # Se a extração não trouxe nada (sprint vazia), para por aqui
+    
     if not dados_extracao: return
     
-    # =========================================================
-    # 2. INSERÇÃO DOS DADOS CORRETOS
-    # =========================================================
     payload = []
     for item in dados_extracao:
         payload.append({
@@ -329,18 +320,19 @@ def sincronizar_com_banco(dados_extracao, projeto_nome, sprint_id):
             "RESUMO": item["Resumo"], 
             "CLIENTE": item["Cliente"],
             "STATUS": item.get("Status", "Desconhecido"),
-            "SISTEMA": item["Sistema"]
+            "SISTEMA": item["Sistema"],
+            "DATA_LIMITE": item.get("data_limite") 
         })
     
     try:
         query = text("""
             INSERT INTO TB_SPRINT_DETAILS 
-            (ISSUE_KEY, PROJETO, RESPONSAVEL, TIPO_ITEM, CATEGORIA, PONTOS, DATA_CONCLUSAO, ID_SPRINT, RESUMO, CLIENTE, STATUS, SISTEMA)
+            (ISSUE_KEY, PROJETO, RESPONSAVEL, TIPO_ITEM, CATEGORIA, PONTOS, DATA_CONCLUSAO, ID_SPRINT, RESUMO, CLIENTE, STATUS, SISTEMA, DATA_LIMITE)
             VALUES 
-            (:ISSUE_KEY, :PROJETO, :RESPONSAVEL, :TIPO_ITEM, :CATEGORIA, :PONTOS, :DATA_CONCLUSAO, :ID_SPRINT, :RESUMO, :CLIENTE, :STATUS, :SISTEMA)
+            (:ISSUE_KEY, :PROJETO, :RESPONSAVEL, :TIPO_ITEM, :CATEGORIA, :PONTOS, :DATA_CONCLUSAO, :ID_SPRINT, :RESUMO, :CLIENTE, :STATUS, :SISTEMA, :DATA_LIMITE)
             ON DUPLICATE KEY UPDATE 
             RESPONSAVEL = VALUES(RESPONSAVEL), TIPO_ITEM = VALUES(TIPO_ITEM), CATEGORIA = VALUES(CATEGORIA), 
-            PONTOS = VALUES(PONTOS), DATA_CONCLUSAO = VALUES(DATA_CONCLUSAO), CLIENTE = VALUES(CLIENTE), RESUMO = VALUES(RESUMO), STATUS = VALUES(STATUS), SISTEMA = VALUES(SISTEMA)
+            PONTOS = VALUES(PONTOS), DATA_CONCLUSAO = VALUES(DATA_CONCLUSAO), CLIENTE = VALUES(CLIENTE), RESUMO = VALUES(RESUMO), STATUS = VALUES(STATUS), SISTEMA = VALUES(SISTEMA), DATA_LIMITE = VALUES(DATA_LIMITE)
         """)
         with conn.session as s:
             s.execute(query, payload)
@@ -408,6 +400,9 @@ def executar_extracao(data_inicio_input, data_fim_input, descricao_input, fase_s
         
     try:
         conn.reset()
+        with conn.session as s:
+            s.execute(text("DELETE FROM TB_SPRINT_DETAILS WHERE ID_SPRINT = :id"), {"id": id_sprint})
+            s.commit()
 
         dados_star_pontos = obter_dados_projeto("STAR")
         sincronizar_com_banco(dados_star_pontos, "STAR", id_sprint)
