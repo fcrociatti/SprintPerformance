@@ -950,7 +950,7 @@ with aba_dashboard:
             st.altair_chart(grafico_burndown, use_container_width=True, theme="streamlit")
             
             
-            with st.expander("📅 Prova de Coerência: Ver itens entregues por dia", expanded=False):
+            with st.expander("Itens entregues por dia", expanded=False):
                 if not df_filtrado.empty:
                     df_auditoria = df_filtrado.copy()
                     
@@ -1222,7 +1222,7 @@ with aba_dashboard:
                         )
                     
                     st.markdown("<br>", unsafe_allow_html=True)
-                    with st.expander("🔍 Auditoria: Ver os itens que compõem este gráfico", expanded=False):
+                    with st.expander("Detalhes do Gráfico", expanded=False):
                         df_auditoria_status = df_status_sprint.copy()
                         
                         df_auditoria_status['link'] = "https://ddsinfo.atlassian.net/browse/" + df_auditoria_status['issue_key']
