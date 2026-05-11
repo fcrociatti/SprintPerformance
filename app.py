@@ -444,7 +444,7 @@ with aba_dashboard:
             anderson = obter_qtd("Anderson")
             fernando = obter_qtd("Fernando")
             gustavo = obter_qtd("Gustavo")
-            nathan = obter_qtd("Nathan")
+            jonathan = obter_qtd("Jonathan")
             eder = obter_qtd("Eder")
             sergio = obter_qtd("Sergio")
             daniel = obter_qtd("Daniel")
@@ -567,7 +567,7 @@ with aba_dashboard:
                     tot, sus, des = 0, 0, 0
                     qtd_sergio, qtd_eder, qtd_daniel = 0, 0, 0
                     tot_foco_se = 0
-                    qtd_anderson, qtd_fernando, qtd_gustavo, qtd_nathan = 0, 0, 0, 0
+                    qtd_anderson, qtd_fernando, qtd_gustavo, qtd_jonathan = 0, 0, 0, 0
                     tot_analise = 0
                     
                     if 'df_snapshots' in locals() and not df_snapshots.empty:
@@ -596,13 +596,13 @@ with aba_dashboard:
                                     qtd_anderson = resps.str.contains('anderson').sum()
                                     qtd_fernando = resps.str.contains('fernando').sum()
                                     qtd_gustavo = resps.str.contains('gustavo').sum()
-                                    qtd_nathan = resps.str.contains('nathan').sum()
-                                    tot_analise = qtd_anderson + qtd_fernando + qtd_gustavo + qtd_nathan
+                                    qtd_jonathan = resps.str.contains('jonathan').sum()
+                                    tot_analise = qtd_anderson + qtd_fernando + qtd_gustavo + qtd_jonathan
                         
                     dados_matriz[nome_sp] = [
                         tot, sus, des,
                         tot_foco_se, qtd_sergio, qtd_eder, qtd_daniel,
-                        tot_analise, qtd_anderson, qtd_fernando, qtd_gustavo, qtd_nathan
+                        tot_analise, qtd_anderson, qtd_fernando, qtd_gustavo, qtd_jonathan
                     ]
                 
                 df_matriz = pd.DataFrame(dados_matriz)
@@ -679,17 +679,17 @@ with aba_dashboard:
             with col_eq2:
                 with st.container(border=True):
                     st.markdown("#### 🔎 Composição: Equipa de Análise")
-                    st.metric("Total Análise", anderson + fernando + gustavo + nathan)
+                    st.metric("Total Análise", anderson + fernando + gustavo + jonathan)
                     st.divider()
                     
                     c1, c2, c3, c4 = st.columns(4)
                     c1.metric("Anderson", anderson)
                     c2.metric("Fernando", fernando)
                     c3.metric("Gustavo", gustavo)
-                    c4.metric("Nathan", nathan)
+                    c4.metric("Jonathan", jonathan)
 
                     st.markdown("<br>", unsafe_allow_html=True)
-                    df_an_comp = pd.DataFrame({'responsavel': ["Anderson", "Fernando", "Gustavo", "Nathan"],'quantidade': [anderson, fernando, gustavo, nathan]})
+                    df_an_comp = pd.DataFrame({'responsavel': ["Anderson", "Fernando", "Gustavo", "Jonathan"],'quantidade': [anderson, fernando, gustavo, jonathan]})
                     
                     if not df_an_comp.empty and df_an_comp['quantidade'].sum() > 0:
                         bar_comp = alt.Chart(df_an_comp).mark_bar(color="#37a0d2").encode(
@@ -1180,6 +1180,9 @@ with aba_dashboard:
                 if 'status' in df_status_sprint.columns:
                     df_status_sprint['status'] = df_status_sprint['status'].fillna("Desconhecido")
                     
+                    
+                    df_status_sprint = df_status_sprint[df_status_sprint['status'] != '6.0 Concluído']
+                    
                     df_grafico_status = df_status_sprint.groupby('status').size().reset_index(name='quantidade')
                     
                     df_grafico_status = df_grafico_status.sort_values(by='status', ascending=True)
@@ -1242,7 +1245,7 @@ with aba_dashboard:
                                 "resumo": st.column_config.TextColumn("Resumo", width="large"),
                                 "status": "Status no Banco",
                                 "responsavel": "Responsável",
-                                "link": st.column_config.LinkColumn("Abrir no Jira")
+                                "link": st.column_config.LinkColumn("Abrir no Jira", display_text="https://ddsinfo.atlassian.net/browse/(.*)")
                             }
                         )
                 else:
