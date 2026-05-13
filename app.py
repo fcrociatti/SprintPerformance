@@ -532,89 +532,90 @@ with aba_dashboard:
 
         
             st.divider()
-            st.subheader("📊 Matriz Comparativa de Sprints")
-            st.write("Analise a evolução de itens e a distribuição da equipe ao longo das Sprints.")
-            
-            todas_sprints_nomes = df_sprints['nome_sprint'].tolist()
-            
-            sprints_selecionadas = st.multiselect(
-                "Selecione as Sprints para comparar (Colunas):",
-                options=todas_sprints_nomes,
-                default=todas_sprints_nomes
-            )
-            
-            if sprints_selecionadas:
-                linhas_apontadores = [
-                    "📦 Total de Itens",
-                    "🔧 Sustentação",
-                    "💻 Desenvolvimento",
-                    " Total Foco Sérgio+Eder",
-                    " Sérgio",
-                    " Eder",
-                    " Daniel",
-                    " Total Análise",
-                    " Anderson",
-                    " Fernando",
-                    " Gustavo",
-                    " Nathan"
-                ]
-                
-                dados_matriz = {"Apontadores Principais": linhas_apontadores}
-                
-                for nome_sp in sprints_selecionadas:
-                    id_sp = int(df_sprints[df_sprints['nome_sprint'] == nome_sp].iloc[0]['id'])
-                    
-                    tot, sus, des = 0, 0, 0
-                    qtd_sergio, qtd_eder, qtd_daniel = 0, 0, 0
-                    tot_foco_se = 0
-                    qtd_anderson, qtd_fernando, qtd_gustavo, qtd_jonathan = 0, 0, 0, 0
-                    tot_analise = 0
-                    
-                    if 'df_snapshots' in locals() and not df_snapshots.empty:
-                        snaps_sp = df_snapshots[df_snapshots['sprint_id'] == id_sp]
-                        if not snaps_sp.empty:
-                            last_snap = snaps_sp.iloc[-1]
-                            tot, sus, des = last_snap['qtd_total'], last_snap['qtd_sust'], last_snap['qtd_desv']
-                    
-                    if 'df_backlog' in locals() and not df_backlog.empty:
-                        col_id = next((col for col in df_backlog.columns if col.lower() in ['id_sprint', 'sprint_id']), None)
-                        
-                        if col_id:
-                            bk_sp = df_backlog[df_backlog[col_id] == id_sp]
-                            
-                            if not bk_sp.empty:
-                                col_resp = next((col for col in bk_sp.columns if col.lower() in ['responsavel', 'assignee', 'responsável']), None)
-                                
-                                if col_resp:
-                                    resps = bk_sp[col_resp].fillna('').str.lower()
-                                    
-                                    qtd_sergio = resps.str.contains('sergio|sérgio').sum()
-                                    qtd_eder = resps.str.contains('eder').sum()
-                                    qtd_daniel = resps.str.contains('daniel').sum()
-                                    tot_foco_se = qtd_sergio + qtd_eder
-                                    
-                                    qtd_anderson = resps.str.contains('anderson').sum()
-                                    qtd_fernando = resps.str.contains('fernando').sum()
-                                    qtd_gustavo = resps.str.contains('gustavo').sum()
-                                    qtd_jonathan = resps.str.contains('jonathan').sum()
-                                    tot_analise = qtd_anderson + qtd_fernando + qtd_gustavo + qtd_jonathan
-                        
-                    dados_matriz[nome_sp] = [
-                        tot, sus, des,
-                        tot_foco_se, qtd_sergio, qtd_eder, qtd_daniel,
-                        tot_analise, qtd_anderson, qtd_fernando, qtd_gustavo, qtd_jonathan
-                    ]
-                
-                df_matriz = pd.DataFrame(dados_matriz)
-                
-                for col in sprints_selecionadas:
-                    df_matriz[col] = df_matriz[col].astype(int)
-                    
-                st.dataframe(df_matriz, use_container_width=True, hide_index=True)
-            else:
-                st.info("⚠️ Selecione pelo menos uma Sprint no filtro acima para visualizar o comparativo.")            
-                
 
+            
+            with st.expander("📊 Matriz Comparativa)", expanded=False):
+            
+                todas_sprints_nomes = df_sprints['nome_sprint'].tolist()
+                
+                sprints_selecionadas = st.multiselect(
+                    "Selecione as Sprints para comparar (Colunas):",
+                    options=todas_sprints_nomes,
+                    default=todas_sprints_nomes
+                )
+                
+                if sprints_selecionadas:
+                    linhas_apontadores = [
+                        "📦 Total de Itens",
+                        "🔧 Sustentação",
+                        "💻 Desenvolvimento",
+                        " Total Foco Sérgio+Eder",
+                        " Sérgio",
+                        " Eder",
+                        " Daniel",
+                        " Total Análise",
+                        " Anderson",
+                        " Fernando",
+                        " Gustavo",
+                        " Nathan"
+                    ]
+                    
+                    dados_matriz = {"Apontadores Principais": linhas_apontadores}
+                    
+                    for nome_sp in sprints_selecionadas:
+                        id_sp = int(df_sprints[df_sprints['nome_sprint'] == nome_sp].iloc[0]['id'])
+                        
+                        tot, sus, des = 0, 0, 0
+                        qtd_sergio, qtd_eder, qtd_daniel = 0, 0, 0
+                        tot_foco_se = 0
+                        qtd_anderson, qtd_fernando, qtd_gustavo, qtd_jonathan = 0, 0, 0, 0
+                        tot_analise = 0
+                        
+                        if 'df_snapshots' in locals() and not df_snapshots.empty:
+                            snaps_sp = df_snapshots[df_snapshots['sprint_id'] == id_sp]
+                            if not snaps_sp.empty:
+                                last_snap = snaps_sp.iloc[-1]
+                                tot, sus, des = last_snap['qtd_total'], last_snap['qtd_sust'], last_snap['qtd_desv']
+                        
+                        if 'df_backlog' in locals() and not df_backlog.empty:
+                            col_id = next((col for col in df_backlog.columns if col.lower() in ['id_sprint', 'sprint_id']), None)
+                            
+                            if col_id:
+                                bk_sp = df_backlog[df_backlog[col_id] == id_sp]
+                                
+                                if not bk_sp.empty:
+                                    col_resp = next((col for col in bk_sp.columns if col.lower() in ['responsavel', 'assignee', 'responsável']), None)
+                                    
+                                    if col_resp:
+                                        resps = bk_sp[col_resp].fillna('').str.lower()
+                                        
+                                        qtd_sergio = resps.str.contains('sergio|sérgio').sum()
+                                        qtd_eder = resps.str.contains('eder').sum()
+                                        qtd_daniel = resps.str.contains('daniel').sum()
+                                        tot_foco_se = qtd_sergio + qtd_eder
+                                        
+                                        qtd_anderson = resps.str.contains('anderson').sum()
+                                        qtd_fernando = resps.str.contains('fernando').sum()
+                                        qtd_gustavo = resps.str.contains('gustavo').sum()
+                                        qtd_jonathan = resps.str.contains('jonathan').sum()
+                                        tot_analise = qtd_anderson + qtd_fernando + qtd_gustavo + qtd_jonathan
+                            
+                        dados_matriz[nome_sp] = [
+                            tot, sus, des,
+                            tot_foco_se, qtd_sergio, qtd_eder, qtd_daniel,
+                            tot_analise, qtd_anderson, qtd_fernando, qtd_gustavo, qtd_jonathan
+                        ]
+                    
+                    df_matriz = pd.DataFrame(dados_matriz)
+                    
+                    for col in sprints_selecionadas:
+                        df_matriz[col] = df_matriz[col].astype(int)
+                        
+                    st.dataframe(df_matriz, use_container_width=True, hide_index=True)
+                else:
+                    st.info("⚠️ Selecione pelo menos uma Sprint no filtro acima para visualizar o comparativo.")            
+                
+            st.divider()
             col_eq1, col_eq2 = st.columns(2)
 
             with col_eq1:
@@ -1252,10 +1253,168 @@ with aba_dashboard:
                     st.warning("A coluna 'status' não está disponível para gerar o gráfico.")
             else:
                 st.info("Nenhum dado encontrado para analisar os status.")
-    
+
+           
+           
+            # ========================================================
+            # PAINEL DE AVALIAÇÃO: REGRAS DE DATA E BLOQUEIO
+            # ========================================================
+            st.divider()
+            st.subheader(f"Avaliação da {sprint_selecionada.split(' - ')[0]}")
+            
+            with st.container(border=True):
+                lista_gestores_fixa = ["Castellar", "Daniel", "Eder", "Fernando", "Santos", "Sergio", "Victor"]
+                
+                row_sprint_info = df_sprints[df_sprints['id'] == id_sprint_selecionada].iloc[0]
+                dt_fim_sprint = row_sprint_info['data_fim']
+                if isinstance(dt_fim_sprint, str):
+                    dt_fim_sprint = datetime.strptime(dt_fim_sprint, "%Y-%m-%d").date()
+                
+                hoje = datetime.now().date()
+                sprint_encerrada = hoje > dt_fim_sprint
+
+                try:
+                    df_existente = conn.query(f"SELECT NOME_GESTOR, NOTA FROM TB_SPRINT_AVALIACAO WHERE ID_SPRINT = {id_sprint_selecionada}", ttl="10m")
+                except Exception:
+                    df_existente = pd.DataFrame(columns=['NOME_GESTOR', 'NOTA'])
+
+                ja_salvo = not df_existente.empty
+
+                if not sprint_encerrada:
+                    st.info(f"A avaliação ficará disponível para envio após o encerramento da Sprint ({dt_fim_sprint.strftime('%d/%m')}).")
+                elif ja_salvo:
+                    st.warning("Avaliação consolidada. Alterações não são permitidas neste painel.")
+                else:
+                    st.success("Sprint encerrada. Notas prontas para preenchimento e salvamento.")
+
+                df_template = pd.DataFrame({'Colaborador': lista_gestores_fixa})
+                if ja_salvo:
+                    df_template = df_template.merge(df_existente.rename(columns={'NOME_GESTOR': 'Gestor', 'NOTA': 'Nota'}), on='Gestor', how='left').fillna(0.0)
+                else:
+                    df_template['Nota'] = 0.0
+
+                df_editado = st.data_editor(
+                    df_template,
+                    column_config={
+                        "Gestor": st.column_config.TextColumn("Gestor", disabled=True),
+                        "Nota": st.column_config.NumberColumn("Nota", min_value=0.0, max_value=5.0, step=0.1, format="%.1f", disabled=ja_salvo or not sprint_encerrada),
+                    },
+                    hide_index=True, use_container_width=True, key=f"editor_notas_{id_sprint_selecionada}"
+                )
+
+                pode_salvar = sprint_encerrada and not ja_salvo
+                if st.button("Salvar Avaliação Final", use_container_width=True, type="primary", disabled=not pode_salvar):
+                    try:
+                        from sqlalchemy import text
+                        with conn.session as s:
+                            for index, row in df_editado.iterrows():
+                                s.execute(text("INSERT INTO TB_SPRINT_AVALIACAO (ID_SPRINT, NOME_GESTOR, NOTA) VALUES (:id, :g, :n)"),
+                                          {"id": id_sprint_selecionada, "g": row['Gestor'], "n": row['Nota']})
+                            s.commit()
+                        st.success("Avaliação salva com sucesso!")
+                        st.cache_data.clear()
+                        st.rerun()
+                    except Exception as e: 
+                        st.error(f"Erro ao salvar: {e}")
+
+                notas_validas = df_editado[df_editado['Nota'] > 0]['Nota']
+                if not notas_validas.empty:
+                    media_atual = notas_validas.mean()
+                    st.info(f" **Média Consolidada da Sprint: {media_atual:.1f} / 5.0**")
+
+            # ========================================================
+            # EXPANDER: EDIÇÃO RETROATIVA (CORREÇÕES)
+            # ========================================================
+            with st.expander("Editar Nota Retroativa"):
+                st.warning("Atenção: Use este campo apenas para corrigir erros de digitação em sprints passadas.")
+                
+                try:
+                    # Adicionado ttl="10m" para evitar recarregamento
+                    df_all_notas = conn.query("SELECT DISTINCT NOME_GESTOR FROM TB_SPRINT_AVALIACAO", ttl="10m")
+                    gestores_para_edit = df_all_notas['NOME_GESTOR'].tolist() if not df_all_notas.empty else []
+                    
+                    col_ed1, col_ed2, col_ed3 = st.columns([2, 1, 1])
+                    
+                    gestor_edit = col_ed1.selectbox("Responsável para ajustar:", gestores_para_edit, key="sel_gest_edit")
+                    nova_nota_edit = col_ed2.number_input("Nova Nota:", 0.0, 5.0, 5.0, 0.1, key="num_nota_edit")
+                    
+                    col_ed3.write("")
+                    col_ed3.write("")
+                    if col_ed3.button("Confirmar Alteração", use_container_width=True):
+                        from sqlalchemy import text
+                        with conn.session as s:
+                            s.execute(text("UPDATE TB_SPRINT_AVALIACAO SET NOTA = :n WHERE ID_SPRINT = :id AND NOME_GESTOR = :g"),
+                                      {"n": nova_nota_edit, "id": id_sprint_selecionada, "g": gestor_edit})
+                            s.commit()
+                        st.success(f"Nota de {gestor_edit} atualizada para {nova_nota_edit}!")
+                        st.cache_data.clear()
+                        st.rerun()
+                except Exception:
+                    st.info("Nenhuma nota encontrada para edição retroativa.")
+                
+            # ========================================================
+            # NOVO: EVOLUÇÃO DA QUALIDADE (NOTAS DOS GESTORES)
+            # ========================================================
+            st.divider()
+            st.subheader("Evolução da Qualidade (Média das notas)")
+            st.write("Acompanhamento das notas médias atribuída para cada sprint.")
+
+            try:
+                query_historico_notas = """
+                    SELECT s.DESCRICAO as Sprint, a.NOME_GESTOR as Gestor, a.NOTA as Nota, s.DATA_INICIO
+                    FROM TB_SPRINT_AVALIACAO a
+                    JOIN TB_SPRINT s ON a.ID_SPRINT = s.ID_SPRINT
+                    ORDER BY s.DATA_INICIO ASC
+                """
+                df_tendencia_raw = conn.query(query_historico_notas, ttl="10m")
+
+                if not df_tendencia_raw.empty:
+                    df_media_sprint = df_tendencia_raw.groupby('Sprint')['Nota'].mean().reset_index()
+                    df_media_sprint.rename(columns={'Nota': 'Media'}, inplace=True)
+
+                    chart_tendencia = alt.Chart(df_media_sprint).mark_line(
+                        color='#4CA6FF',
+                        strokeWidth=3,
+                        point=alt.OverlayMarkDef(size=80, color='#4CA6FF', fill='white')
+                    ).encode(
+                        x=alt.X('Sprint:N', sort=None, title="Sprints Anteriores"),
+                        y=alt.Y('Media:Q', title="Nota Média (0-5)", scale=alt.Scale(domain=[0, 5])),
+                        tooltip=['Sprint', alt.Tooltip('Media:Q', format='.1f', title='Nota Média')]
+                    ).properties(height=350)
+
+                    st.altair_chart(chart_tendencia, use_container_width=True, theme="streamlit")
+                    with st.expander("Ver comparativo detalhado (Notas por participante)"):
+                        
+                        df_pivot = df_tendencia_raw.pivot_table(
+                            index='Colaborador',
+                            columns='Sprint',
+                            values='Nota',
+                            aggfunc='first'
+                        )
+
+                        linha_media = df_pivot.mean().round(1)
+
+                        df_pivot = df_pivot.round(1)
+
+                        df_pivot = df_pivot.fillna("-")
+
+                        df_exibicao = df_pivot.copy()
+                        df_exibicao.loc['MÉDIA FINAL'] = linha_media
+
+                        df_exibicao.loc['MÉDIA FINAL'] = df_exibicao.loc['MÉDIA FINAL'].apply(lambda x: f"{x:.1f}" if isinstance(x, (int, float)) else x)
+
+                        df_exibicao = df_exibicao.reset_index()
+
+                        st.dataframe(df_exibicao, use_container_width=True, hide_index=True)
+                        
+                else:
+                    st.info("Ainda não há avaliações suficientes registradas no banco para gerar o gráfico de evolução.")
+                    
+            except Exception as e:
+                st.error(f"Erro ao processar histórico de médias: {e}")
                     
         else:
             st.info("Nenhum item encontrado no backlog para exibir clientes.")
 
     else:
-        st.warning("Vá à aba '⚙️ Gerenciar Sprints' e adicione a sua primeira Sprint!")
+        st.warning("Vá à aba 'Gerenciar Sprints' e adicione a sua primeira Sprint!")
