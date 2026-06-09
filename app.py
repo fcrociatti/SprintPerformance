@@ -1253,15 +1253,21 @@ with aba_dashboard:
 
         st.subheader("Gestão de RN's e Qualidade")
 
+        st.subheader("Gestão de RN's e Qualidade")
+
+        df_issues_all = df_issues[df_issues['sprint_id'] == id_sprint_selecionada].copy()
+        df_backlog_all = df_backlog[df_backlog['sprint_id'] == id_sprint_selecionada].copy()
+        
+        df_todas_issues = pd.concat([df_issues_all, df_backlog_all], ignore_index=True)
+
         df_rns = pd.DataFrame()
         df_concluidos = pd.DataFrame()
-
-        df_todas_issues = df_issues[df_issues['sprint_id'] == id_sprint_selecionada].copy()
 
         if not df_todas_issues.empty:
             df_todas_issues['tipo_norm'] = df_todas_issues['tipo_item'].astype(str).str.lower().str.strip()
             df_rns = df_todas_issues[df_todas_issues['tipo_norm'].str.contains('retorno negativo', na=False)].copy()
-            df_concluidos = df_todas_issues[df_todas_issues['status'] == '6.0 Concluído']
+            
+            df_concluidos = df_issues_all[df_issues_all['status'] == '6.0 Concluído']
             
             c1, c2, c3 = st.columns(3)
             c1.metric("RNs Gerados", len(df_rns))
@@ -1274,13 +1280,13 @@ with aba_dashboard:
             col_left, col_right = st.columns(2)
 
             with col_left:
-                st.write("**⚠️ RNs por Desenvolvedor**")
+                st.write("**RNs por Desenvolvedor**")
                 df_rank = df_rns.groupby('responsavel').size().reset_index(name='Qtd_RNs')
                 df_rank = df_rank.sort_values(by='Qtd_RNs', ascending=False)
                 bar_chart = alt.Chart(df_rank).mark_bar().encode(
                     x=alt.X('Qtd_RNs:Q', title='Qtd de RNs', axis=alt.Axis(tickMinStep=1)),
                     y=alt.Y('responsavel:N', sort='-x', title=''),
-                    color=alt.value('#E74C3C'),
+                    color=alt.value("#3CD6E7"),
                     tooltip=['responsavel', 'Qtd_RNs']
                 ).properties(height=200)
                 st.altair_chart(bar_chart, use_container_width=True)
