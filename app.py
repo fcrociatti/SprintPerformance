@@ -1066,33 +1066,7 @@ with aba_dashboard:
 
             df_anotacoes = pd.DataFrame(anotacoes_rows) if anotacoes_rows else pd.DataFrame()
 
-            with st.expander("Debug — Burndown", expanded=False):
-                sp_debug = sprints_anteriores[['id', 'descricao']].copy() if 'sprints_anteriores' in dir() and not sprints_anteriores.empty else pd.DataFrame()
-                if not sp_debug.empty:
-                    st.caption("Sprints utilizadas nas médias")
-                    st.dataframe(sp_debug.rename(columns={'id': 'ID', 'descricao': 'Descrição'}), hide_index=True, use_container_width=True)
-
-                col_d1, col_d2 = st.columns(2)
-                with col_d1:
-                    st.caption("Média Trabalho Restante por dia")
-                    df_mr = pd.DataFrame({
-                        'Dia': [d.strftime("%d/%m") for d in dias_sprint],
-                        'Média': [f"{v:,.1f}".replace(',', '.') if v is not None else '—' for v in media_restante_por_dia]
-                    })
-                    st.dataframe(df_mr, hide_index=True, use_container_width=True)
-                with col_d2:
-                    st.caption("Média Entrega Diária por dia")
-                    df_me = pd.DataFrame({
-                        'Dia': [d.strftime("%d/%m") for d in dias_sprint],
-                        'Média': [f"{v:,.1f}".replace(',', '.') if v is not None else '—' for v in (media_entrega_por_dia + [None] * qtd_dias)[:qtd_dias]]
-                    })
-                    st.dataframe(df_me, hide_index=True, use_container_width=True)
-
-                st.caption("Dados completos do gráfico")
-                df_debug_fmt = df_burndown[['Data', 'Diretriz', 'Trabalho Restante', 'Concluídos Acumulados', 'Média Entrega Diária', 'Média por Sprint']].copy()
-                for col in ['Diretriz', 'Trabalho Restante', 'Concluídos Acumulados', 'Média Entrega Diária', 'Média por Sprint']:
-                    df_debug_fmt[col] = df_debug_fmt[col].apply(lambda v: f"{v:,.1f}".replace(',', '.') if pd.notna(v) else '—')
-                st.dataframe(df_debug_fmt, hide_index=True, use_container_width=True)
+            
 
             legenda_itens = [
                 '<div><b style="color: gray;">- - -</b> Diretriz Ideal</div>',
@@ -1250,8 +1224,6 @@ with aba_dashboard:
             for cod in todos_codigos:
                 if cod.upper().startswith('RC'): return cod.upper()
             return todos_codigos[0].upper()
-
-        st.subheader("Gestão de RN's e Qualidade")
 
         st.subheader("Gestão de RN's e Qualidade")
 
