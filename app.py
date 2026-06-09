@@ -5,6 +5,7 @@ from datetime import timedelta, datetime
 from somaCopia import executar_extracao
 from somaCopia import limpar_snapshot_sprint 
 import os
+import re
 
 st.set_page_config(page_title="Sprint Performance - DDS", layout="wide")
 
@@ -27,6 +28,9 @@ with col_logo:
 # ==========================================
 # CARREGAMENTO GLOBAL DOS DADOS 
 # ==========================================
+# ==========================================
+# CARREGAMENTO GLOBAL DOS DADOS 
+# ==========================================
 def carregar_issues():
     conn.reset()
     query = """
@@ -34,7 +38,7 @@ def carregar_issues():
                RESPONSAVEL as responsavel, TIPO_ITEM as tipo_item, CATEGORIA as categoria, 
                PONTOS as pontos, DATA_CONCLUSAO as data_conclusao, ID_SPRINT as sprint_id, 
                CLIENTE as cliente, RESUMO as resumo, STATUS as status, SISTEMA as sistema,
-               DATA_LIMITE as data_limite
+               DATA_LIMITE as data_limite, DATA_CRIACAO as data_criacao
         FROM TB_SPRINT_DETAILS
     """
     return conn.query(query)
@@ -705,7 +709,7 @@ with aba_dashboard:
                         with st.expander(" Detalhes de itens da Equipe de Análise"):
                             analista_selecionado = st.selectbox(
                                 "Filtrar tarefas de:", 
-                                ["Todos da Equipe", "Anderson", "Fernando", "Gustavo", "Nathan"],
+                                ["Todos da Equipe", "Anderson", "Fernando", "Gustavo", "Jonathan"],
                                 label_visibility="collapsed" 
                             )
                             
@@ -717,7 +721,7 @@ with aba_dashboard:
                             if not df_detalhe.empty:
                                 df_detalhe['link'] = "https://ddsinfo.atlassian.net/browse/" + df_detalhe['issue_key']
                                 st.dataframe(
-                                    df_detalhe[['issue_key','resumo' , 'responsavel', 'tipo_item', 'link']], 
+                                    df_detalhe[['issue_key','resumo' , 'responsavel', 'tipo_item', 'cliente','link']], 
                                     hide_index=True,
                                     use_container_width=True,
                                     column_config={
@@ -725,6 +729,7 @@ with aba_dashboard:
                                         "resumo" : "Resumo",
                                         "responsavel": "Analista",
                                         "tipo_item": "Tipo",
+                                        "cliente": "cliente",
                                         "link": st.column_config.LinkColumn("Jira")
                                     }
                                 )
@@ -837,50 +842,153 @@ with aba_dashboard:
             st.info("Nenhuma entrega contabilizada.")
 
         st.divider()
-        st.subheader("📉 Burndown da Sprint")
+        st.subheader("Burndown da Sprint")
+
+        col1, col2, col3 = st.columns([2, 1, 1])
+        with col1:
+            num_sprints = st.slider("Qtd de Sprints anteriores para média:", min_value=1, max_value=6, value=5, key="slider_sprints_burndown")
+        with col2:
+            show_media_entrega = st.checkbox("Média de Entrega Diária", value=True)
+        with col3:
+            show_media_sprint = st.checkbox("Média por Sprint", value=True)
 
         if not df_backlog_filtrado.empty or not df_filtrado.empty:
-            
             id_sprint = int(df_sprints[df_sprints['nome_exibicao'] == sprint_selecionada]['id'].iloc[0])
             total_atual_pendentes = len(df_backlog_filtrado)
-            
-            itens_sust_hoje = len(df_backlog_filtrado[df_backlog_filtrado['categoria'] == 'Sustentação']) if not df_backlog_filtrado.empty else 0
-            itens_desv_hoje = len(df_backlog_filtrado[df_backlog_filtrado['categoria'] == 'Desenvolvimento']) if not df_backlog_filtrado.empty else 0
-
-            tickets_iniciais = total_atual_pendentes + len(df_filtrado) # Fallback padrão
-            sust_inicial = itens_sust_hoje
-            desv_inicial = itens_desv_hoje
+            tickets_iniciais = total_atual_pendentes + len(df_filtrado)
             
             if 'df_snapshots' in locals() and not df_snapshots.empty:
                 snaps_sp = df_snapshots[df_snapshots['sprint_id'] == id_sprint].copy()
                 snaps_inicio = snaps_sp[snaps_sp['fase'] == 'INICIO']
                 if not snaps_inicio.empty:
                     tickets_iniciais = snaps_inicio.iloc[-1]['qtd_total']
-                    sust_inicial = snaps_inicio.iloc[-1]['qtd_sust']
-                    desv_inicial = snaps_inicio.iloc[-1]['qtd_desv']
 
             data_ini_str = df_sprints[df_sprints['nome_exibicao'] == sprint_selecionada]['data_inicio'].iloc[0]
             data_fim_str = df_sprints[df_sprints['nome_exibicao'] == sprint_selecionada]['data_fim'].iloc[0]
-            
             data_ini = data_ini_str if not isinstance(data_ini_str, str) else datetime.strptime(data_ini_str, "%Y-%m-%d").date()
             data_fim = data_fim_str if not isinstance(data_fim_str, str) else datetime.strptime(data_fim_str, "%Y-%m-%d").date()
             
             qtd_dias = (data_fim - data_ini).days + 1
             dias_sprint = [data_ini + timedelta(days=x) for x in range(qtd_dias)]
 
+            media_entrega_por_dia = []
+            media_restante_por_dia = [None] * qtd_dias
+            historico_restante = {d: None for d in range(qtd_dias)}
+            historico_dias_entrega = {d: None for d in range(qtd_dias)}
+
+            try:
+                idx_atual = df_sprints.index[df_sprints['id'] == id_sprint].tolist()[0]
+                sprints_anteriores = df_sprints.iloc[idx_atual+1 : idx_atual+1+num_sprints]
+                ids_sprints_anteriores = sprints_anteriores['id'].tolist()
+
+                historico_restante = {d: [] for d in range(qtd_dias)}
+
+                if 'df_snapshots' in locals() and not df_snapshots.empty:
+                    df_snaps_hist = df_snapshots[
+                        df_snapshots['sprint_id'].isin(ids_sprints_anteriores)
+                    ].copy()
+                    df_snaps_hist['qtd_total'] = pd.to_numeric(df_snaps_hist['qtd_total'], errors='coerce')
+                    df_snaps_hist['data_dt'] = (
+                        pd.to_datetime(df_snaps_hist['data_registro'], errors='coerce')
+                        - pd.Timedelta(hours=3)
+                    ).dt.date
+
+                    for _, sp_row in sprints_anteriores.iterrows():
+                        sp_id = sp_row['id']
+                        sp_ini_str = sp_row['data_inicio']
+                        sp_ini_date = (sp_ini_str if not isinstance(sp_ini_str, str)
+                                       else datetime.strptime(sp_ini_str, "%Y-%m-%d").date())
+
+                        df_sp_snaps = df_snaps_hist[df_snaps_hist['sprint_id'] == sp_id]
+                        if df_sp_snaps.empty:
+                            continue
+
+                        dict_sp_restante = (
+                            df_sp_snaps.sort_values('data_registro')
+                            .groupby('data_dt')['qtd_total']
+                            .last()
+                            .dropna()
+                            .to_dict()
+                        )
+                        if not dict_sp_restante:
+                            continue
+
+                        snaps_antes = {d: v for d, v in dict_sp_restante.items() if d <= sp_ini_date}
+                        ultimo_conhecido = snaps_antes[max(snaps_antes)] if snaps_antes else None
+
+                        for offset in range(qtd_dias):
+                            dia_alvo = sp_ini_date + timedelta(days=offset)
+                            if dia_alvo in dict_sp_restante:
+                                ultimo_conhecido = dict_sp_restante[dia_alvo]
+                            if ultimo_conhecido is not None:
+                                historico_restante[offset].append((ultimo_conhecido, sp_row.get('descricao', sp_row.get('nome_sprint', str(sp_id)))))
+
+                for offset in range(qtd_dias):
+                    pares = [(v, s) for v, s in historico_restante[offset] if v is not None]
+                    if pares:
+                        valores = [v for v, _ in pares]
+                        media_restante_por_dia[offset] = round(sum(valores) / len(valores), 1)
+                        max_par = max(pares, key=lambda x: x[0])
+                        min_par = min(pares, key=lambda x: x[0])
+                        historico_restante[offset] = {'media': media_restante_por_dia[offset],
+                                                      'max_val': max_par[0], 'max_sp': max_par[1],
+                                                      'min_val': min_par[0], 'min_sp': min_par[1]}
+                    else:
+                        historico_restante[offset] = None
+
+                historico_dias_entrega = {d: [] for d in range(qtd_dias)}
+
+                if not df_issues.empty and ids_sprints_anteriores:
+                    df_issues_hist = df_issues[
+                        (df_issues['projeto'].isin(projeto)) &
+                        (df_issues['sprint_id'].isin(ids_sprints_anteriores))
+                    ].copy()
+                    if not df_issues_hist.empty:
+                        df_issues_hist['data_conclusao_dt'] = pd.to_datetime(
+                            df_issues_hist['data_conclusao'], errors='coerce'
+                        ).dt.date
+
+                    for _, sp_row in sprints_anteriores.iterrows():
+                        sp_id = sp_row['id']
+                        sp_ini_str = sp_row['data_inicio']
+                        sp_ini_date = (sp_ini_str if not isinstance(sp_ini_str, str)
+                                       else datetime.strptime(sp_ini_str, "%Y-%m-%d").date())
+                        df_sp_issues = df_issues_hist[df_issues_hist['sprint_id'] == sp_id]
+
+                        if df_sp_issues.empty:
+                            continue
+
+                        dict_sp_concluidos = df_sp_issues.groupby('data_conclusao_dt').size().to_dict()
+                        total_acc = 0
+                        sp_nome = sp_row.get('descricao', sp_row.get('nome_sprint', str(sp_id)))
+                        for offset in range(qtd_dias):
+                            dia_alvo = sp_ini_date + timedelta(days=offset)
+                            total_acc += dict_sp_concluidos.get(dia_alvo, 0)
+                            historico_dias_entrega[offset].append((total_acc, sp_nome))
+
+                for offset in range(qtd_dias):
+                    pares = [(v, s) for v, s in historico_dias_entrega[offset] if v is not None]
+                    if pares:
+                        valores = [v for v, _ in pares]
+                        media = round(sum(valores) / len(valores), 1)
+                        media_entrega_por_dia.append(media)
+                        max_par = max(pares, key=lambda x: x[0])
+                        min_par = min(pares, key=lambda x: x[0])
+                        historico_dias_entrega[offset] = {'media': media,
+                                                          'max_val': max_par[0], 'max_sp': max_par[1],
+                                                          'min_val': min_par[0], 'min_sp': min_par[1]}
+                    else:
+                        media_entrega_por_dia.append(None)
+                        historico_dias_entrega[offset] = None
+            except Exception as e:
+                media_entrega_por_dia = [None] * qtd_dias
+                media_restante_por_dia = [None] * qtd_dias
+
             dict_real_diario = {}
-            dict_sust_diario = {}
-            dict_desv_diario = {}
-            
             if 'snaps_sp' in locals() and not snaps_sp.empty:
                 snaps_sp['data_dt'] = (pd.to_datetime(snaps_sp['data_registro']) - pd.Timedelta(hours=3)).dt.date
-                ultimo_snap_por_dia = snaps_sp.sort_values('data_registro').groupby('data_dt').last()
-                
-                dict_real_diario = ultimo_snap_por_dia['qtd_total'].to_dict()
-                dict_sust_diario = ultimo_snap_por_dia['qtd_sust'].to_dict()
-                dict_desv_diario = ultimo_snap_por_dia['qtd_desv'].to_dict()
+                dict_real_diario = snaps_sp.sort_values('data_registro').groupby('data_dt')['qtd_total'].last().to_dict()
 
-            
             dict_concluidos_diario = {}
             if not df_filtrado.empty:
                 df_filtrado_copy = df_filtrado.copy()
@@ -890,104 +998,317 @@ with aba_dashboard:
             bd_dados = []
             passo_ideal = tickets_iniciais / (qtd_dias - 1) if qtd_dias > 1 else 0
             hoje = datetime.now().date()
-            
             ultimo_valor_conhecido = tickets_iniciais
-            ultimo_sust = sust_inicial
-            ultimo_desv = desv_inicial
-            
             total_concluidos_acumulado = 0 
 
             for i, dia in enumerate(dias_sprint):
                 ideal_restante = tickets_iniciais - (passo_ideal * i)
-
-                if dia == hoje:
-                    ultimo_valor_conhecido = total_atual_pendentes
-                    ultimo_sust = itens_sust_hoje
-                    ultimo_desv = itens_desv_hoje
-                elif dia in dict_real_diario:
-                    ultimo_valor_conhecido = dict_real_diario[dia]
-                    ultimo_sust = dict_sust_diario[dia]
-                    ultimo_desv = dict_desv_diario[dia]
-
-                
+                if dia == hoje: ultimo_valor_conhecido = total_atual_pendentes
+                elif dia in dict_real_diario: ultimo_valor_conhecido = dict_real_diario[dia]
                 concluidos_hoje = dict_concluidos_diario.get(dia, 0)
-                
-                if dia <= hoje:
-                    total_concluidos_acumulado += concluidos_hoje
-
+                if dia <= hoje: total_concluidos_acumulado += concluidos_hoje
                 bd_dados.append({
                     "Data": dia.strftime("%d/%m"),
                     "Diretriz": round(ideal_restante, 1),
                     "Trabalho Restante": ultimo_valor_conhecido if dia <= hoje else None,
-                    "Sustentação": ultimo_sust if dia <= hoje else None,
-                    "Desenvolvimento": ultimo_desv if dia <= hoje else None,
                     "Concluídos Acumulados": total_concluidos_acumulado if dia <= hoje else None,
-                    "Concluídos no Dia": concluidos_hoje if dia <= hoje else None
+                    "Média Entrega Diária": round(media_entrega_por_dia[i], 1) if i < len(media_entrega_por_dia) and media_entrega_por_dia[i] is not None else None,
+                    "Média por Sprint": media_restante_por_dia[i] if i < len(media_restante_por_dia) and media_restante_por_dia[i] is not None else None
                 })
 
             df_burndown = pd.DataFrame(bd_dados)
+            df_burndown['Média Entrega Diária'] = pd.to_numeric(df_burndown['Média Entrega Diária'], errors='coerce')
+            df_burndown['Média por Sprint'] = pd.to_numeric(df_burndown['Média por Sprint'], errors='coerce')
 
-            base = alt.Chart(df_burndown).encode(
-                x=alt.X('Data:O', sort=df_burndown['Data'].tolist(), title="Dias da Sprint")
+            anotacoes_rows = []
+
+            def _registrar_picos(historico, col_nome, datas_sprint):
+                candidatos_max = []  # (valor_bruto, sprint_nome, offset)
+                candidatos_min = []
+
+                for offset in range(len(datas_sprint)):
+                    info = historico.get(offset)
+                    if info and isinstance(info, dict):
+                        candidatos_max.append((info['max_val'], info['max_sp'], offset))
+                        candidatos_min.append((info['min_val'], info['min_sp'], offset))
+
+                if not candidatos_max or not candidatos_min:
+                    return
+
+                val_max, sp_max, offset_max = max(candidatos_max, key=lambda x: x[0])
+                val_min, sp_min, offset_min = min(candidatos_min, key=lambda x: x[0])
+
+                data_max = datas_sprint[offset_max].strftime("%d/%m")
+                data_min = datas_sprint[offset_min].strftime("%d/%m")
+
+                anotacoes_rows.append({
+                    'Data': data_max,
+                    'Valor': val_max,
+                    'Label': f"▲ {val_max:.0f} | {sp_max} | {data_max}",
+                    'Tipo': f'Pico Máx — {col_nome}',
+                    'Cor': '#2ECC71',
+                    'dy': -18,
+                })
+                anotacoes_rows.append({
+                    'Data': data_min,
+                    'Valor': val_min,
+                    'Label': f"▼ {val_min:.0f} | {sp_min} | {data_min}",
+                    'Tipo': f'Pico Mín — {col_nome}',
+                    'Cor': '#74B9FF',
+                    'dy': 18,
+                })
+
+            if show_media_entrega and any(isinstance(historico_dias_entrega.get(o), dict) for o in range(qtd_dias)):
+                _registrar_picos(historico_dias_entrega, 'Entrega Diária', dias_sprint)
+
+            if show_media_sprint and any(isinstance(historico_restante.get(o), dict) for o in range(qtd_dias)):
+                _registrar_picos(historico_restante, 'Trabalho Rest.', dias_sprint)
+
+            df_anotacoes = pd.DataFrame(anotacoes_rows) if anotacoes_rows else pd.DataFrame()
+
+            with st.expander("Debug — Burndown", expanded=False):
+                sp_debug = sprints_anteriores[['id', 'descricao']].copy() if 'sprints_anteriores' in dir() and not sprints_anteriores.empty else pd.DataFrame()
+                if not sp_debug.empty:
+                    st.caption("Sprints utilizadas nas médias")
+                    st.dataframe(sp_debug.rename(columns={'id': 'ID', 'descricao': 'Descrição'}), hide_index=True, use_container_width=True)
+
+                col_d1, col_d2 = st.columns(2)
+                with col_d1:
+                    st.caption("Média Trabalho Restante por dia")
+                    df_mr = pd.DataFrame({
+                        'Dia': [d.strftime("%d/%m") for d in dias_sprint],
+                        'Média': [f"{v:,.1f}".replace(',', '.') if v is not None else '—' for v in media_restante_por_dia]
+                    })
+                    st.dataframe(df_mr, hide_index=True, use_container_width=True)
+                with col_d2:
+                    st.caption("Média Entrega Diária por dia")
+                    df_me = pd.DataFrame({
+                        'Dia': [d.strftime("%d/%m") for d in dias_sprint],
+                        'Média': [f"{v:,.1f}".replace(',', '.') if v is not None else '—' for v in (media_entrega_por_dia + [None] * qtd_dias)[:qtd_dias]]
+                    })
+                    st.dataframe(df_me, hide_index=True, use_container_width=True)
+
+                st.caption("Dados completos do gráfico")
+                df_debug_fmt = df_burndown[['Data', 'Diretriz', 'Trabalho Restante', 'Concluídos Acumulados', 'Média Entrega Diária', 'Média por Sprint']].copy()
+                for col in ['Diretriz', 'Trabalho Restante', 'Concluídos Acumulados', 'Média Entrega Diária', 'Média por Sprint']:
+                    df_debug_fmt[col] = df_debug_fmt[col].apply(lambda v: f"{v:,.1f}".replace(',', '.') if pd.notna(v) else '—')
+                st.dataframe(df_debug_fmt, hide_index=True, use_container_width=True)
+
+            legenda_itens = [
+                '<div><b style="color: gray;">- - -</b> Diretriz Ideal</div>',
+                '<div><b style="color: #4CA6FF;">━●━</b> Trabalho Restante</div>',
+                '<div><b style="color: #28A745;">━●━</b> Concluídos Acumulados</div>',
+            ]
+            if show_media_entrega:
+                legenda_itens.append('<div><b style="color: #FF9F43;">- - -</b> Média Entrega Diária</div>')
+                legenda_itens.append('<div><b style="color: #2ECC71;">◆</b> Pico Máx — Entrega Diária</div>')
+                legenda_itens.append('<div><b style="color: #74B9FF;">◆</b> Pico Mín — Entrega Diária</div>')
+            if show_media_sprint:
+                legenda_itens.append('<div><b style="color: #8E44AD;">- - -</b> Média por Sprint</div>')
+                legenda_itens.append('<div><b style="color: #2ECC71;">◆</b> Pico Máx — Trabalho Rest.</div>')
+                legenda_itens.append('<div><b style="color: #74B9FF;">◆</b> Pico Mín — Trabalho Rest.</div>')
+
+            st.markdown(
+                '<div style="display:flex;flex-wrap:wrap;justify-content:center;gap:20px;font-size:14px;margin-bottom:15px;">'
+                + "".join(legenda_itens)
+                + '</div>',
+                unsafe_allow_html=True
             )
 
-            linha_ideal = base.mark_line(color='gray', strokeDash=[5, 5]).encode(
-                y=alt.Y('Diretriz:Q', title="Quantidade de Itens"),
-                tooltip=['Data', 'Diretriz']
-            )
+            eixo_x = alt.X('Data:O', sort=None, title="Dias da Sprint")
+            eixo_y = alt.Y('Valor:Q', title="Quantidade de Itens")
 
-            linha_real = base.mark_line(color='#4CA6FF', point=True, strokeWidth=3).encode(
-                y=alt.Y('Trabalho Restante:Q'),
-                tooltip=['Data', 'Trabalho Restante', 'Sustentação', 'Desenvolvimento']
-            )
-            
-           
-            linha_concluidos = base.mark_line(color='#28A745', point=True, strokeWidth=3).encode(
-                y=alt.Y('Concluídos Acumulados:Q'),
-                tooltip=['Data', 'Concluídos Acumulados', 'Concluídos no Dia']
-            )
+            def _make_serie(df_base, coluna, cor, stroke_dash, point, stroke_width):
+                df_serie = (
+                    df_base[['Data', coluna]]
+                    .rename(columns={coluna: 'Valor'})
+                    .dropna(subset=['Valor'])
+                    .copy()
+                )
+                df_serie['Valor'] = pd.to_numeric(df_serie['Valor'], errors='coerce')
+                df_serie = df_serie.dropna(subset=['Valor'])
+                if df_serie.empty:
+                    return None
+                mark_kwargs = dict(color=cor, strokeWidth=stroke_width)
+                if stroke_dash:
+                    mark_kwargs['strokeDash'] = stroke_dash
+                if point:
+                    mark_kwargs['point'] = True
+                return (
+                    alt.Chart(df_serie)
+                    .mark_line(**mark_kwargs)
+                    .encode(
+                        x=eixo_x,
+                        y=eixo_y,
+                        tooltip=[
+                            alt.Tooltip('Data:O', title='Data'),
+                            alt.Tooltip('Valor:Q', title=coluna, format='.1f'),
+                        ]
+                    )
+                )
 
-            grafico_burndown = (linha_ideal + linha_real + linha_concluidos).properties(height=350)
-            st.altair_chart(grafico_burndown, use_container_width=True, theme="streamlit")
-            
+            camadas = []
+
+            for coluna, cor, dash, pt, sw in [
+                ('Diretriz',              'gray',    [5, 5], False, 2),
+                ('Trabalho Restante',     '#4CA6FF', [],     True,  3),
+                ('Concluídos Acumulados', '#28A745', [],     True,  3),
+            ]:
+                c = _make_serie(df_burndown, coluna, cor, dash if dash else None, pt, sw)
+                if c is not None:
+                    camadas.append(c)
+
+            if show_media_entrega:
+                c = _make_serie(df_burndown, 'Média Entrega Diária', '#FF9F43', [2, 2], False, 3)
+                if c is not None:
+                    camadas.append(c)
+
+            if show_media_sprint:
+                c = _make_serie(df_burndown, 'Média por Sprint', '#8E44AD', [4, 2], False, 3)
+                if c is not None:
+                    camadas.append(c)
+
+            if not df_anotacoes.empty:
+                for _, ann_row in df_anotacoes.iterrows():
+                    df_ann = pd.DataFrame([{'Data': ann_row['Data'],
+                                            'Valor': ann_row['Valor'],
+                                            'Label': ann_row['Label']}])
+                    cor_ann = ann_row['Cor']
+                    dy_ann  = int(ann_row['dy'])
+
+                    df_ann['Tipo'] = ann_row['Tipo']
+                    ponto = (
+                        alt.Chart(df_ann)
+                        .mark_point(size=150, color=cor_ann, filled=True, opacity=0.95, shape='diamond')
+                        .encode(
+                            x=alt.X('Data:O', sort=None),
+                            y=alt.Y('Valor:Q'),
+                            tooltip=[
+                                alt.Tooltip('Tipo:N', title='📌 Marcador'),
+                                alt.Tooltip('Label:N', title='Detalhe'),
+                                alt.Tooltip('Valor:Q', title='Valor', format='.1f'),
+                                alt.Tooltip('Data:O', title='Dia'),
+                            ]
+                        )
+                    )
+                    texto = (
+                        alt.Chart(df_ann)
+                        .mark_text(
+                            dy=dy_ann,
+                            fontSize=11,
+                            fontWeight='bold',
+                            color=cor_ann,
+                            align='center',
+                        )
+                        .encode(
+                            x=alt.X('Data:O', sort=None),
+                            y=alt.Y('Valor:Q'),
+                            text=alt.Text('Label:N'),
+                        )
+                    )
+                    camadas.append(ponto)
+                    camadas.append(texto)
+
+            if camadas:
+                grafico_burndown = alt.layer(*camadas).resolve_scale(y='shared').properties(height=420)
+                st.altair_chart(grafico_burndown, use_container_width=True, theme="streamlit")
+            else:
+                st.info("Sem dados suficientes para renderizar o gráfico de Burndown.")
             
             with st.expander("Itens entregues por dia", expanded=False):
                 if not df_filtrado.empty:
                     df_auditoria = df_filtrado.copy()
-                    
                     df_auditoria['Data da Entrega'] = pd.to_datetime(df_auditoria['data_conclusao']).dt.strftime('%d/%m/%Y')
-                    
                     df_auditoria = df_auditoria.sort_values('data_conclusao')
-                    
                     df_auditoria['link'] = "https://ddsinfo.atlassian.net/browse/" + df_auditoria['issue_key']
-                    
                     dias_com_entrega = ["Todos os Dias"] + df_auditoria['Data da Entrega'].unique().tolist()
                     dia_selecionado = st.selectbox("Filtrar por dia específico:", dias_com_entrega)
-                    
-                    if dia_selecionado != "Todos os Dias":
-                        df_auditoria = df_auditoria[df_auditoria['Data da Entrega'] == dia_selecionado]
-                    
+                    if dia_selecionado != "Todos os Dias": df_auditoria = df_auditoria[df_auditoria['Data da Entrega'] == dia_selecionado]
                     st.dataframe(
                         df_auditoria[['Data da Entrega', 'issue_key', 'resumo', 'responsavel', 'pontos', 'link']],
-                        use_container_width=True,
-                        hide_index=True,
-                        column_config={
-                            "Data da Entrega": "Data de Conclusão",
-                            "issue_key": "Chave",
-                            "resumo": st.column_config.TextColumn("Resumo da Tarefa", width="large"),
-                            "responsavel": "Desenvolvedor",
-                            "pontos": st.column_config.NumberColumn("Pontos", format="%d"),
-                            "link": st.column_config.LinkColumn("Jira")
-                        }
+                        use_container_width=True, hide_index=True,
+                        column_config={"Data da Entrega": "Data de Conclusão", "issue_key": "Chave", "resumo": st.column_config.TextColumn("Resumo", width="large"), "responsavel": "Dev", "pontos": st.column_config.NumberColumn("Pontos", format="%d"), "link": st.column_config.LinkColumn("Jira")}
                     )
-                else:
-                    st.info("Nenhum item foi concluído nesta sprint ainda.")
-            
-        else:
-            st.info("Sem dados suficientes para gerar o Burndown.")
-            
+                else: st.info("Nenhum item foi concluído nesta sprint ainda.")
+        else: st.info("Sem dados suficientes para gerar o Burndown.")
+        st.divider()       
 
+
+        def buscar_autor_original(issue_key):
+            try:
+                query = f"SELECT RESPONSAVEL FROM TB_SPRINT_DETAILS WHERE ISSUE_KEY = '{issue_key}' LIMIT 1"
+                resultado = conn.query(query)
+                if not resultado.empty: return resultado.iloc[0]['RESPONSAVEL']
+            except: pass
+            return "Não rastreado"
+
+        def extrair_pai_prioritario(resumo):
+            todos_codigos = re.findall(r'([A-Za-z]+-\d+)', str(resumo))
+            if not todos_codigos: return "Sem Pai"
+            for cod in todos_codigos:
+                if cod.upper().startswith('STAR'): return cod.upper()
+            for cod in todos_codigos:
+                if cod.upper().startswith('RC'): return cod.upper()
+            return todos_codigos[0].upper()
+
+        st.subheader("Gestão de RN's e Qualidade")
+
+        df_rns = pd.DataFrame()
+        df_concluidos = pd.DataFrame()
+
+        df_todas_issues = df_issues[df_issues['sprint_id'] == id_sprint_selecionada].copy()
+
+        if not df_todas_issues.empty:
+            df_todas_issues['tipo_norm'] = df_todas_issues['tipo_item'].astype(str).str.lower().str.strip()
+            df_rns = df_todas_issues[df_todas_issues['tipo_norm'].str.contains('retorno negativo', na=False)].copy()
+            df_concluidos = df_todas_issues[df_todas_issues['status'] == '6.0 Concluído']
+            
+            c1, c2, c3 = st.columns(3)
+            c1.metric("RNs Gerados", len(df_rns))
+            c2.metric("Itens Concluídos", len(df_concluidos))
+            taxa = (len(df_rns) / len(df_concluidos) * 100) if len(df_concluidos) > 0 else 0
+            c3.metric("Densidade de Falha", f"{taxa:.1f}%")
+
+        if not df_rns.empty:
+            st.write("---")
+            col_left, col_right = st.columns(2)
+
+            with col_left:
+                st.write("**⚠️ RNs por Desenvolvedor**")
+                df_rank = df_rns.groupby('responsavel').size().reset_index(name='Qtd_RNs')
+                df_rank = df_rank.sort_values(by='Qtd_RNs', ascending=False)
+                bar_chart = alt.Chart(df_rank).mark_bar().encode(
+                    x=alt.X('Qtd_RNs:Q', title='Qtd de RNs', axis=alt.Axis(tickMinStep=1)),
+                    y=alt.Y('responsavel:N', sort='-x', title=''),
+                    color=alt.value('#E74C3C'),
+                    tooltip=['responsavel', 'Qtd_RNs']
+                ).properties(height=200)
+                st.altair_chart(bar_chart, use_container_width=True)
+
+            with col_right:
+                st.write("**Status dos RNs**")
+                df_status = df_rns.groupby('status').size().reset_index(name='Qtd')
+                donut = alt.Chart(df_status).mark_arc(innerRadius=50).encode(
+                    theta="Qtd:Q", color="status:N"
+                ).properties(height=200)
+                st.altair_chart(donut, use_container_width=True)
+
+            with st.expander(" Detalhamento de Raiz"):
+                df_rns['item_origem'] = df_rns['resumo'].apply(extrair_pai_prioritario)
+                df_rns['autor_original'] = df_rns['item_origem'].apply(buscar_autor_original)
+                st.dataframe(
+                    df_rns[['issue_key', 'item_origem', 'autor_original', 'responsavel', 'resumo']],
+                    use_container_width=True, hide_index=True,
+                    column_config={
+                        "issue_key": st.column_config.LinkColumn("Ticket RN", display_text="https://ddsinfo.atlassian.net/browse/(.*)"),
+                        "item_origem": st.column_config.LinkColumn("Pai", display_text=r"https://ddsinfo.atlassian.net/browse/(.*)"),
+                        "resumo": st.column_config.TextColumn("Resumo", width="large")
+                    }
+                )
+        else:
+            st.success("Nenhum RN na sprint atual. Fluxo limpo!")
         st.divider()
+
         st.subheader("Itens por Cliente (Planning)")
 
         if not df_backlog_filtrado.empty:

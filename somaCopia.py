@@ -58,8 +58,6 @@ def obter_dados_projeto(projeto):
     while True:
         jql = f'project = "{projeto}" AND TYPE != Bug ORDER BY created DESC'
         
-        
-
         params = {"jql": jql, "fields": f"{CUSTOM_SISTEMA_FIELD},{CUSTOM_POINT_FIELD},{CUSTOM_DATE_FIELD},assignee,status,issuetype,summary,{CUSTOM_CLIENTE_FIELD},duedate,created", "expand": "changelog", "maxResults": 25}
         
         if next_token: params["nextPageToken"] = next_token
@@ -125,13 +123,17 @@ def obter_dados_projeto(projeto):
             data_limite_raw = issue["fields"].get("duedate")
             data_limite = data_limite_raw[:10] if data_limite_raw else None           
 
+            # === CORREÇÃO: Extração da Data de Criação ===
+            data_criacao_raw = issue["fields"].get("created", "")
+            data_criacao = data_criacao_raw[:10] if data_criacao_raw else "2000-01-01"
+            # =============================================
+
             campo_data_existente = issue["fields"].get(CUSTOM_DATE_FIELD)
             precisa_atualizar = False
 
             if campo_data_existente:
                 data_existente_str = campo_data_existente.split("T")[0]
                 data_esperada_str = periodo_inicio.strftime("%Y-%m-%d")
-                
                 
                 if data_existente_str != data_esperada_str:
                     continue 
@@ -149,7 +151,8 @@ def obter_dados_projeto(projeto):
                 "Cliente": cliente_nome,
                 "Status" : status_nome,
                 "Sistema" : sistema_nome,
-                "data_limite": data_limite
+                "data_limite": data_limite,
+                "data_criacao": data_criacao # <-- CORREÇÃO AQUI
             })
 
             data_iso = periodo_inicio.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "+0000"
@@ -178,8 +181,6 @@ def obter_dados_projeto(projeto):
                     msg = (f"❌ Falha ao atualizar Jira ({key}): {update_resp.text}")
                     print(msg)
                     st.session_state['logs_jira'].append(msg)
-
-            
 
         if data_json.get("isLast") or not data_json.get("issues", []): break
         next_token = data_json.get("nextPageToken")
@@ -321,18 +322,19 @@ def sincronizar_com_banco(dados_extracao, projeto_nome, sprint_id):
             "CLIENTE": item["Cliente"],
             "STATUS": item.get("Status", "Desconhecido"),
             "SISTEMA": item["Sistema"],
-            "DATA_LIMITE": item.get("data_limite") 
+            "DATA_LIMITE": item.get("data_limite"),
+            "DATA_CRIACAO": item.get("data_criacao") # <-- CORREÇÃO AQUI
         })
     
     try:
         query = text("""
             INSERT INTO TB_SPRINT_DETAILS 
-            (ISSUE_KEY, PROJETO, RESPONSAVEL, TIPO_ITEM, CATEGORIA, PONTOS, DATA_CONCLUSAO, ID_SPRINT, RESUMO, CLIENTE, STATUS, SISTEMA, DATA_LIMITE)
+            (ISSUE_KEY, PROJETO, RESPONSAVEL, TIPO_ITEM, CATEGORIA, PONTOS, DATA_CONCLUSAO, ID_SPRINT, RESUMO, CLIENTE, STATUS, SISTEMA, DATA_LIMITE, DATA_CRIACAO)
             VALUES 
-            (:ISSUE_KEY, :PROJETO, :RESPONSAVEL, :TIPO_ITEM, :CATEGORIA, :PONTOS, :DATA_CONCLUSAO, :ID_SPRINT, :RESUMO, :CLIENTE, :STATUS, :SISTEMA, :DATA_LIMITE)
+            (:ISSUE_KEY, :PROJETO, :RESPONSAVEL, :TIPO_ITEM, :CATEGORIA, :PONTOS, :DATA_CONCLUSAO, :ID_SPRINT, :RESUMO, :CLIENTE, :STATUS, :SISTEMA, :DATA_LIMITE, :DATA_CRIACAO)
             ON DUPLICATE KEY UPDATE 
             RESPONSAVEL = VALUES(RESPONSAVEL), TIPO_ITEM = VALUES(TIPO_ITEM), CATEGORIA = VALUES(CATEGORIA), 
-            PONTOS = VALUES(PONTOS), DATA_CONCLUSAO = VALUES(DATA_CONCLUSAO), CLIENTE = VALUES(CLIENTE), RESUMO = VALUES(RESUMO), STATUS = VALUES(STATUS), SISTEMA = VALUES(SISTEMA), DATA_LIMITE = VALUES(DATA_LIMITE)
+            PONTOS = VALUES(PONTOS), DATA_CONCLUSAO = VALUES(DATA_CONCLUSAO), CLIENTE = VALUES(CLIENTE), RESUMO = VALUES(RESUMO), STATUS = VALUES(STATUS), SISTEMA = VALUES(SISTEMA), DATA_LIMITE = VALUES(DATA_LIMITE), DATA_CRIACAO = VALUES(DATA_CRIACAO)
         """)
         with conn.session as s:
             s.execute(query, payload)
