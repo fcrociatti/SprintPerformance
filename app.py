@@ -95,7 +95,7 @@ if not df_sprints.empty:
     df_sprints['nome_exibicao'] = df_sprints['descricao'] + " - " + df_sprints['nome_sprint']
 
 
-aba_dashboard,  aba_sincronizacao, aba_historico = st.tabs(["📈 Visão da Sprint",  "⚙️ Gerenciar Sprints", "📊 Histórico & Desempenho"])
+aba_dashboard,  aba_sincronizacao, aba_historico = st.tabs([" Visão da Sprint",  " Gerenciar Sprints", " Histórico & Desempenho"])
 
 # ==========================================
 # ABA 2: HISTÓRICO E DESEMPENHO 
@@ -122,9 +122,7 @@ with aba_historico:
                 
                 devs_selecionados_hist = col_f2.multiselect("2. Filtrar Desenvolvedores:", devs_disp_hist, default=devs_com_numero)
                 
-                # ========================================================
-                # CORREÇÃO AQUI: Aplicar o filtro no DataFrame df_hist
-                # ========================================================
+                
                 if devs_selecionados_hist:
                     df_hist = df_hist[df_hist['responsavel'].isin(devs_selecionados_hist)]
                 else:
@@ -445,10 +443,11 @@ with aba_dashboard:
             itens_sust = len(df_backlog_filtrado[df_backlog_filtrado['categoria'] == 'Sustentação'])
             itens_desv = len(df_backlog_filtrado[df_backlog_filtrado['categoria'] == 'Desenvolvimento'])
 
-            anderson = obter_qtd("Anderson")
             fernando = obter_qtd("Fernando")
-            gustavo = obter_qtd("Gustavo")
             jonathan = obter_qtd("Jonathan")
+            thiago = obter_qtd("Thiago")
+            paulo = obter_qtd("Paulo")
+            kaic = obter_qtd("Kaic de Castro")
             eder = obter_qtd("Eder")
             sergio = obter_qtd("Sergio")
             daniel = obter_qtd("Daniel")
@@ -624,7 +623,7 @@ with aba_dashboard:
 
             with col_eq1:
                 with st.container(border=True):
-                    st.markdown("#### 💼 Composição: Gestão (Foco)")
+                    st.markdown("#### Gestão (Foco)")
                     st.metric("Total Foco Sérgio+Eder", sergio + eder)
                     st.divider()
 
@@ -683,18 +682,22 @@ with aba_dashboard:
 
             with col_eq2:
                 with st.container(border=True):
-                    st.markdown("#### 🔎 Composição: Equipa de Análise")
-                    st.metric("Total Análise", anderson + fernando + gustavo + jonathan)
+                    st.markdown("####  Equipe de Análise")
+                    st.metric("Total Análise", fernando + jonathan + thiago + paulo + kaic)
                     st.divider()
                     
-                    c1, c2, c3, c4 = st.columns(4)
-                    c1.metric("Anderson", anderson)
-                    c2.metric("Fernando", fernando)
-                    c3.metric("Gustavo", gustavo)
-                    c4.metric("Jonathan", jonathan)
+                    c1, c2, c3, c4, c5 = st.columns(5)
+                    c1.metric("Fernando", fernando)
+                    c2.metric("Jonathan", jonathan)
+                    c3.metric("Thiago", thiago)
+                    c4.metric("Paulo", paulo)
+                    c5.metric("Kaic", kaic)
 
                     st.markdown("<br>", unsafe_allow_html=True)
-                    df_an_comp = pd.DataFrame({'responsavel': ["Anderson", "Fernando", "Gustavo", "Jonathan"],'quantidade': [anderson, fernando, gustavo, jonathan]})
+                    df_an_comp = pd.DataFrame({
+                        'responsavel': ["Fernando", "Jonathan", "Thiago", "Paulo", "Kaic"],
+                        'quantidade': [fernando, jonathan, thiago, paulo, kaic]
+                    })
                     
                     if not df_an_comp.empty and df_an_comp['quantidade'].sum() > 0:
                         bar_comp = alt.Chart(df_an_comp).mark_bar(color="#37a0d2").encode(
@@ -705,16 +708,15 @@ with aba_dashboard:
                         label_comp = bar_comp.mark_text(align='left', baseline='middle', dx=5, color='white').encode(text='quantidade:Q')
                         st.altair_chart((bar_comp + label_comp).properties(height=200), use_container_width=True, theme="streamlit")
                         
-                       
                         with st.expander(" Detalhes de itens da Equipe de Análise"):
                             analista_selecionado = st.selectbox(
                                 "Filtrar tarefas de:", 
-                                ["Todos da Equipe", "Anderson", "Fernando", "Gustavo", "Jonathan"],
+                                ["Todos da Equipe", "Fernando", "Jonathan", "Thiago Honorato", "Paulo Domingues", "Kaic De Castro"],
                                 label_visibility="collapsed" 
                             )
                             
                             if analista_selecionado == "Todos da Equipe":
-                                df_detalhe = df_backlog_filtrado[df_backlog_filtrado['responsavel'].str.contains("Anderson|Fernando|Gustavo|Nathan", case=False, na=False)].copy()
+                                df_detalhe = df_backlog_filtrado[df_backlog_filtrado['responsavel'].str.contains("Fernando|Jonathan|Thiago|Paulo|Kaic", case=False, na=False)].copy()
                             else:
                                 df_detalhe = df_backlog_filtrado[df_backlog_filtrado['responsavel'].str.contains(analista_selecionado, case=False, na=False)].copy()
                             
@@ -729,24 +731,23 @@ with aba_dashboard:
                                         "resumo" : "Resumo",
                                         "responsavel": "Analista",
                                         "tipo_item": "Tipo",
-                                        "cliente": "cliente",
+                                        "cliente": "Cliente",
                                         "link": st.column_config.LinkColumn("Jira")
                                     }
                                 )
                             else:
                                 st.warning("Nenhuma tarefa pendente para este filtro.")
                         
-                    else: st.info("Sem dados de análise.")
-            with st.expander("🔍 Ver outros colaboradores e lista completa do backlog"):
-                if todos_os_outros > 0:
-                    st.write("**Resumo dos Outros Colaboradores:**")
-                    outros_agrupado = df_outros['responsavel'].value_counts().reset_index()
-                    outros_agrupado.columns = ['Responsável', 'Qtd de Itens']
-                    st.dataframe(outros_agrupado, hide_index=True)
-                
-                st.write("**Lista Completa do Backlog:**")
+                    else: 
+                        st.info("Sem dados de análise.")
+
+          
+
+            # ========================================================
+            # LISTA COMPLETA DO BACKLOG
+            # ========================================================
+            with st.expander("📋 Ver Lista Completa do Backlog (Todos os itens)"):
                 tabela_backlog = df_backlog_filtrado.copy()
-                
                 tabela_backlog.columns = tabela_backlog.columns.str.lower()
                 if 'status' not in tabela_backlog.columns:
                     tabela_backlog['status'] = 'aguardando sincronizacao'
@@ -764,9 +765,9 @@ with aba_dashboard:
                         "tipo_item": "Tipo", "categoria": "Categoria", "responsavel": "Responsável", 
                         "link": st.column_config.LinkColumn("Jira")
                     }
-                )
-        else:
-                st.info("Nenhum item em andamento encontrado.")
+                )            
+                        
+            
 
         st.divider()
 
@@ -1023,7 +1024,7 @@ with aba_dashboard:
             anotacoes_rows = []
 
             def _registrar_picos(historico, col_nome, datas_sprint):
-                candidatos_max = []  # (valor_bruto, sprint_nome, offset)
+                candidatos_max = []  
                 candidatos_min = []
 
                 for offset in range(len(datas_sprint)):
@@ -1553,16 +1554,14 @@ with aba_dashboard:
             else:
                 st.info("Nenhum dado encontrado para analisar os status.")
 
-           
-           
-            # ========================================================
+           # ========================================================
             # PAINEL DE AVALIAÇÃO: REGRAS DE DATA E BLOQUEIO
             # ========================================================
             st.divider()
             st.subheader(f"Avaliação da {sprint_selecionada.split(' - ')[0]}")
             
             with st.container(border=True):
-                lista_gestores_fixa = ["Castellar", "Daniel", "Eder", "Fernando", "Santos", "Sergio", "Victor"]
+                lista_colaboradores_fixa = ["Castellar", "Daniel", "Eder", "Fernando", "Sergio", "Victor"]
                 
                 row_sprint_info = df_sprints[df_sprints['id'] == id_sprint_selecionada].iloc[0]
                 dt_fim_sprint = row_sprint_info['data_fim']
@@ -1573,7 +1572,8 @@ with aba_dashboard:
                 sprint_encerrada = hoje > dt_fim_sprint
 
                 try:
-                    df_existente = conn.query(f"SELECT NOME_GESTOR, NOTA FROM TB_SPRINT_AVALIACAO WHERE ID_SPRINT = {id_sprint_selecionada}", ttl="10m")
+                    # CORREÇÃO 1: ttl=0 para garantir leitura em tempo real e evitar falsos positivos do cache
+                    df_existente = conn.query(f"SELECT NOME_GESTOR, NOTA FROM TB_SPRINT_AVALIACAO WHERE ID_SPRINT = {id_sprint_selecionada}", ttl=0)
                 except Exception:
                     df_existente = pd.DataFrame(columns=['NOME_GESTOR', 'NOTA'])
 
@@ -1586,16 +1586,21 @@ with aba_dashboard:
                 else:
                     st.success("Sprint encerrada. Notas prontas para preenchimento e salvamento.")
 
-                df_template = pd.DataFrame({'Colaborador': lista_gestores_fixa})
+                df_template = pd.DataFrame({'Colaborador': lista_colaboradores_fixa})
+                
                 if ja_salvo:
-                    df_template = df_template.merge(df_existente.rename(columns={'NOME_GESTOR': 'Gestor', 'NOTA': 'Nota'}), on='Gestor', how='left').fillna(0.0)
+                    df_template = df_template.merge(
+                        df_existente.rename(columns={'NOME_GESTOR': 'Colaborador', 'NOTA': 'Nota'}), 
+                        on='Colaborador', 
+                        how='left'
+                    ).fillna(0.0)
                 else:
                     df_template['Nota'] = 0.0
 
                 df_editado = st.data_editor(
                     df_template,
                     column_config={
-                        "Gestor": st.column_config.TextColumn("Gestor", disabled=True),
+                        "Colaborador": st.column_config.TextColumn("Colaborador", disabled=True),
                         "Nota": st.column_config.NumberColumn("Nota", min_value=0.0, max_value=5.0, step=0.1, format="%.1f", disabled=ja_salvo or not sprint_encerrada),
                     },
                     hide_index=True, use_container_width=True, key=f"editor_notas_{id_sprint_selecionada}"
@@ -1607,8 +1612,15 @@ with aba_dashboard:
                         from sqlalchemy import text
                         with conn.session as s:
                             for index, row in df_editado.iterrows():
-                                s.execute(text("INSERT INTO TB_SPRINT_AVALIACAO (ID_SPRINT, NOME_GESTOR, NOTA) VALUES (:id, :g, :n)"),
-                                          {"id": id_sprint_selecionada, "g": row['Gestor'], "n": row['Nota']})
+                                if row['Nota'] > 0:
+                                    # CORREÇÃO 2: ON DUPLICATE KEY UPDATE para evitar o erro de IntegrityError
+                                    query_insert = """
+                                        INSERT INTO TB_SPRINT_AVALIACAO (ID_SPRINT, NOME_GESTOR, NOTA) 
+                                        VALUES (:id, :g, :n)
+                                        ON DUPLICATE KEY UPDATE NOTA = VALUES(NOTA)
+                                    """
+                                    s.execute(text(query_insert),
+                                              {"id": id_sprint_selecionada, "g": row['Colaborador'], "n": row['Nota']})
                             s.commit()
                         st.success("Avaliação salva com sucesso!")
                         st.cache_data.clear()
@@ -1628,13 +1640,12 @@ with aba_dashboard:
                 st.warning("Atenção: Use este campo apenas para corrigir erros de digitação em sprints passadas.")
                 
                 try:
-                    # Adicionado ttl="10m" para evitar recarregamento
                     df_all_notas = conn.query("SELECT DISTINCT NOME_GESTOR FROM TB_SPRINT_AVALIACAO", ttl="10m")
-                    gestores_para_edit = df_all_notas['NOME_GESTOR'].tolist() if not df_all_notas.empty else []
+                    colaboradores_para_edit = df_all_notas['NOME_GESTOR'].tolist() if not df_all_notas.empty else []
                     
                     col_ed1, col_ed2, col_ed3 = st.columns([2, 1, 1])
                     
-                    gestor_edit = col_ed1.selectbox("Responsável para ajustar:", gestores_para_edit, key="sel_gest_edit")
+                    colaborador_edit = col_ed1.selectbox("Colaborador para ajustar:", colaboradores_para_edit, key="sel_colab_edit")
                     nova_nota_edit = col_ed2.number_input("Nova Nota:", 0.0, 5.0, 5.0, 0.1, key="num_nota_edit")
                     
                     col_ed3.write("")
@@ -1643,16 +1654,18 @@ with aba_dashboard:
                         from sqlalchemy import text
                         with conn.session as s:
                             s.execute(text("UPDATE TB_SPRINT_AVALIACAO SET NOTA = :n WHERE ID_SPRINT = :id AND NOME_GESTOR = :g"),
-                                      {"n": nova_nota_edit, "id": id_sprint_selecionada, "g": gestor_edit})
+                                      {"n": nova_nota_edit, "id": id_sprint_selecionada, "g": colaborador_edit})
                             s.commit()
-                        st.success(f"Nota de {gestor_edit} atualizada para {nova_nota_edit}!")
+                        st.success(f"Nota de {colaborador_edit} atualizada para {nova_nota_edit}!")
                         st.cache_data.clear()
                         st.rerun()
                 except Exception:
                     st.info("Nenhuma nota encontrada para edição retroativa.")
+
+           
                 
             # ========================================================
-            # NOVO: EVOLUÇÃO DA QUALIDADE (NOTAS DOS GESTORES)
+            #  EVOLUÇÃO DA QUALIDADE (NOTAS DOS GESTORES)
             # ========================================================
             st.divider()
             st.subheader("Evolução da Qualidade (Média das notas)")

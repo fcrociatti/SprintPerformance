@@ -123,10 +123,8 @@ def obter_dados_projeto(projeto):
             data_limite_raw = issue["fields"].get("duedate")
             data_limite = data_limite_raw[:10] if data_limite_raw else None           
 
-            # === CORREÇÃO: Extração da Data de Criação ===
             data_criacao_raw = issue["fields"].get("created", "")
             data_criacao = data_criacao_raw[:10] if data_criacao_raw else "2000-01-01"
-            # =============================================
 
             campo_data_existente = issue["fields"].get(CUSTOM_DATE_FIELD)
             precisa_atualizar = False
