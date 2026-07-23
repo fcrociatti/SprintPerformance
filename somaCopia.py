@@ -150,7 +150,7 @@ def obter_dados_projeto(projeto):
                 "Status" : status_nome,
                 "Sistema" : sistema_nome,
                 "data_limite": data_limite,
-                "data_criacao": data_criacao # <-- CORREÇÃO AQUI
+                "data_criacao": data_criacao  
             })
 
             data_iso = periodo_inicio.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "+0000"
@@ -210,6 +210,8 @@ def extrair_e_salvar_backlog(projeto, sprint_id):
     dados_backlog = []
     next_token = ""
     
+    
+    
     jql_backlog = (
         f'type not in( bug , Ajuste)  AND project in ("{projeto}") '
         f'AND Sprint in (openSprints(),EMPTY) '
@@ -220,7 +222,7 @@ def extrair_e_salvar_backlog(projeto, sprint_id):
     while True:
         params = {
             "jql": jql_backlog,
-            "fields": f"assignee,issuetype,summary,{CUSTOM_CLIENTE_FIELD},{CUSTOM_SISTEMA_FIELD},duedate,created,status",
+            "fields": f"assignee,issuetype,summary,{CUSTOM_CLIENTE_FIELD},{CUSTOM_SISTEMA_FIELD},duedate,created,status,{CUSTOM_POINT_FIELD}",
             "maxResults": 25
         }
         
@@ -259,6 +261,17 @@ def extrair_e_salvar_backlog(projeto, sprint_id):
             data_limite_raw = issue["fields"].get("duedate")
             data_limite = data_limite_raw[:10] if data_limite_raw else None  
 
+            pontos_raw = issue["fields"].get(CUSTOM_POINT_FIELD)
+            try:
+                if isinstance(pontos_raw, dict) and "value" in pontos_raw:
+                    pontos = str(pontos_raw["value"]) 
+                elif pontos_raw is not None:
+                    pontos = str(pontos_raw)
+                else:
+                    pontos = "0"
+            except Exception:
+                pontos = "0"
+
             dados_backlog.append({
                 "ID_SPRINT": sprint_id, 
                 "ISSUE_KEY": key,
@@ -271,7 +284,8 @@ def extrair_e_salvar_backlog(projeto, sprint_id):
                 "DATA_CRIACAO" : data_criacao,
                 "STATUS": status_nome, 
                 "SISTEMA" :  sistema_nome,
-                "DATA_LIMITE": data_limite
+                "DATA_LIMITE": data_limite,
+                "PONTOS": pontos 
             })
 
         if data_json.get("isLast") or not data_json.get("issues", []): break
@@ -286,19 +300,19 @@ def extrair_e_salvar_backlog(projeto, sprint_id):
             
             query = text("""
                 INSERT INTO TB_SPRINT_BACKLOG 
-                (ID_SPRINT, ISSUE_KEY, PROJETO, RESPONSAVEL, PAPEL, TIPO_ITEM, RESUMO, CLIENTE, DATA_CRIACAO, STATUS, SISTEMA, DATA_LIMITE)
+                (ID_SPRINT, ISSUE_KEY, PROJETO, RESPONSAVEL, PAPEL, TIPO_ITEM, RESUMO, CLIENTE, DATA_CRIACAO, STATUS, SISTEMA, DATA_LIMITE, PONTOS)
                 VALUES 
-                (:ID_SPRINT, :ISSUE_KEY, :PROJETO, :RESPONSAVEL, :PAPEL, :TIPO_ITEM, :RESUMO, :CLIENTE, :DATA_CRIACAO, :STATUS, :SISTEMA, :DATA_LIMITE)
+                (:ID_SPRINT, :ISSUE_KEY, :PROJETO, :RESPONSAVEL, :PAPEL, :TIPO_ITEM, :RESUMO, :CLIENTE, :DATA_CRIACAO, :STATUS, :SISTEMA, :DATA_LIMITE, :PONTOS)
             """)
             with conn.session as s:
                 s.execute(query, dados_backlog)
                 s.commit()
-                
+                        
             print(f"✅ Backlog da Sprint ({len(dados_backlog)} itens) salvo no MySQL!")
             
         except Exception as e:
             print(f"❌ Erro ao salvar backlog no MySQL: {e}")
-
+            raise e
 
 
 def sincronizar_com_banco(dados_extracao, projeto_nome, sprint_id):
@@ -321,7 +335,7 @@ def sincronizar_com_banco(dados_extracao, projeto_nome, sprint_id):
             "STATUS": item.get("Status", "Desconhecido"),
             "SISTEMA": item["Sistema"],
             "DATA_LIMITE": item.get("data_limite"),
-            "DATA_CRIACAO": item.get("data_criacao") # <-- CORREÇÃO AQUI
+            "DATA_CRIACAO": item.get("data_criacao") 
         })
     
     try:
