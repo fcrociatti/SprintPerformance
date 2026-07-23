@@ -22,6 +22,13 @@ with col_logo:
     if os.path.exists(caminho_logo):
         st.write("") 
         st.image(caminho_logo, use_container_width=True)
+
+status_alvo = [
+    "3.3 Revisão de Código", "4.0 A TESTAR", "4.2 Mergear", "4.3 Pend. Versão",
+    "4.4 A Testar (homologação)", "4.5 A testar (artefato)", "3.2 Reprovados",
+    "5.3 Pendência de Homolog", "6.0 Concluído",
+    "6.1 Pend. Gerar Artefatos", "6.2 Pend. Envio Homolog."
+]
         
 
 
@@ -737,13 +744,8 @@ with aba_dashboard:
                     else: 
                         st.info("Sem dados de análise.")
 
-          
-
-# ========================================================
-        # PAINEL FULL-WIDTH: EQUIPE DE DESENVOLVIMENTO
-        # ========================================================
         with st.container(border=True):
-            st.markdown("####  Composição: Equipe de Desenvolvimento")
+            st.markdown("#### Composição: Equipe de Desenvolvimento")
             
             import re
             
@@ -771,7 +773,8 @@ with aba_dashboard:
                 df_devs_backlog = df_backlog_filtrado[
                     (df_backlog_filtrado['responsavel'].str.contains('|'.join(nomes_devs), case=False, na=False)) &
                     (df_backlog_filtrado['responsavel'].notna()) & 
-                    (df_backlog_filtrado['responsavel'].str.strip() != "")
+                    (df_backlog_filtrado['responsavel'].str.strip() != "") &
+                    (~df_backlog_filtrado['status'].isin(status_alvo))
                 ].copy()
                 
                 if not df_devs_backlog.empty:
@@ -786,8 +789,8 @@ with aba_dashboard:
                     total_pontos = devs_agrupado['Pontos'].sum()
                     
                     col_t1, col_t2 = st.columns(2)
-                    col_t1.metric(" Total de Itens (Devs)", total_devs)
-                    col_t2.metric(" Total de Pontos Pendentes (Devs)", f"{total_pontos:.1f}")
+                    col_t1.metric("Total de Itens (Devs)", total_devs)
+                    col_t2.metric("Total de Pontos Pendentes (Devs)", f"{total_pontos:.1f}")
                     st.divider()
                     
                     devs_agrupado_cards = devs_agrupado.sort_values(by='Quantidade', ascending=False)
@@ -812,7 +815,7 @@ with aba_dashboard:
                     altura_grafico = max(250, num_devs * 35)
 
                     with col_graf1:
-                        st.markdown("######  Demanda (Volume de Itens)")
+                        st.markdown("###### Demanda (Volume de Itens)")
                         bar_itens = alt.Chart(devs_agrupado).mark_bar(color="#4CA6FF", cornerRadiusEnd=3).encode(
                             x=alt.X('Quantidade:Q', title='Itens Pendentes', axis=alt.Axis(grid=False)),
                             y=alt.Y('Responsável:N', sort='-x', title=''), 
@@ -833,7 +836,7 @@ with aba_dashboard:
                         )
                         st.altair_chart((bar_pontos + label_pontos).properties(height=altura_grafico), use_container_width=True, theme="streamlit")
                     
-                    with st.expander(" Detalhes de itens da Equipe de Desenvolvimento"):
+                    with st.expander("Detalhes de itens da Equipe de Desenvolvimento"):
                         dev_selecionado = st.selectbox(
                             "Filtrar tarefas de:", 
                             ["Todos da Equipe"] + devs_agrupado['Responsável'].tolist(),
@@ -848,7 +851,7 @@ with aba_dashboard:
                         if not df_detalhe_dev.empty:
                             df_detalhe_dev['link'] = "https://ddsinfo.atlassian.net/browse/" + df_detalhe_dev['issue_key']
                             st.dataframe(
-                                df_detalhe_dev[['issue_key', 'resumo', 'responsavel', 'tipo_item', 'pontos_calc', 'cliente', 'link']], 
+                                df_detalhe_dev[['issue_key', 'resumo', 'responsavel', 'tipo_item', 'pontos_calc', 'cliente', 'status', 'link']], 
                                 hide_index=True,
                                 use_container_width=True,
                                 column_config={
@@ -858,13 +861,15 @@ with aba_dashboard:
                                     "tipo_item": "Tipo",
                                     "pontos_calc": st.column_config.NumberColumn("Pts", format="%.1f"),
                                     "cliente": "Cliente",
+                                    "status": "Status",
                                     "link": st.column_config.LinkColumn("Jira")
                                 }
                             )
                 else:
-                    st.info("Nenhuma tarefa atribuída para a equipe de desenvolvimento no momento.")
+                    st.info("Nenhuma tarefa pendente de desenvolvimento para a equipe no momento.")
             else:
-                st.info("Backlog vazio ou sem dados para análise.")
+                st.info("Backlog vazio ou sem dados para análise.")  
+
 
         st.divider()
 
