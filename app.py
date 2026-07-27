@@ -539,14 +539,15 @@ with aba_dashboard:
             st.divider()
 
             
-            with st.expander("📊 Matriz Comparativa)", expanded=False):
+            with st.expander(" Matriz Comparativa)", expanded=False):
             
                 todas_sprints_nomes = df_sprints['nome_sprint'].tolist()
                 
                 sprints_selecionadas = st.multiselect(
+                    
                     "Selecione as Sprints para comparar (Colunas):",
                     options=todas_sprints_nomes,
-                    default=todas_sprints_nomes
+                    default=todas_sprints_nomes[-4]
                 )
                 
                 if sprints_selecionadas:
@@ -554,15 +555,19 @@ with aba_dashboard:
                         "📦 Total de Itens",
                         "🔧 Sustentação",
                         "💻 Desenvolvimento",
-                        " Total Foco Sérgio+Eder",
-                        " Sérgio",
+                        " Total Foco Sergio+Eder",
+                        " Sergio",
                         " Eder",
                         " Daniel",
+
                         " Total Análise",
-                        " Anderson",
                         " Fernando",
-                        " Gustavo",
-                        " Nathan"
+                        "Jonathan",
+                        "Thiago",
+                        "Paulo",
+                        "Kaic",
+                        "Enzo"
+            
                     ]
                     
                     dados_matriz = {"Apontadores Principais": linhas_apontadores}
@@ -573,7 +578,8 @@ with aba_dashboard:
                         tot, sus, des = 0, 0, 0
                         qtd_sergio, qtd_eder, qtd_daniel = 0, 0, 0
                         tot_foco_se = 0
-                        qtd_anderson, qtd_fernando, qtd_gustavo, qtd_jonathan = 0, 0, 0, 0
+
+                        qtd_fernando,qtd_jonathan, qtd_thiago, qtd_paulo, qtd_kaic, qtd_enzo = 0, 0, 0, 0,0,0
                         tot_analise = 0
                         
                         if 'df_snapshots' in locals() and not df_snapshots.empty:
@@ -599,16 +605,18 @@ with aba_dashboard:
                                         qtd_daniel = resps.str.contains('daniel').sum()
                                         tot_foco_se = qtd_sergio + qtd_eder
                                         
-                                        qtd_anderson = resps.str.contains('anderson').sum()
                                         qtd_fernando = resps.str.contains('fernando').sum()
-                                        qtd_gustavo = resps.str.contains('gustavo').sum()
                                         qtd_jonathan = resps.str.contains('jonathan').sum()
-                                        tot_analise = qtd_anderson + qtd_fernando + qtd_gustavo + qtd_jonathan
+                                        qtd_thiago = resps.str.contains('thiago').sum()
+                                        qtd_paulo = resps.str.contains('paulo').sum()
+                                        qtd_kaic = resps.str.contains('kaic').sum()
+                                        qtd_enzo = resps.str.contains('enzo').sum()
+
                             
                         dados_matriz[nome_sp] = [
                             tot, sus, des,
                             tot_foco_se, qtd_sergio, qtd_eder, qtd_daniel,
-                            tot_analise, qtd_anderson, qtd_fernando, qtd_gustavo, qtd_jonathan
+                            tot_analise, qtd_jonathan,  qtd_paulo,  qtd_thiago, qtd_enzo, qtd_kaic, qtd_fernando,
                         ]
                     
                     df_matriz = pd.DataFrame(dados_matriz)
@@ -626,7 +634,7 @@ with aba_dashboard:
             with col_eq1:
                 with st.container(border=True):
                     st.markdown("#### Gestão (Foco)")
-                    st.metric("Total Foco Sérgio+Eder", sergio + eder)
+                    st.metric("Total Foco Sergio+Eder", sergio + eder)
                     st.divider()
 
                     nomes_principais = ["Anderson", "Fernando", "Gustavo", "Nathan", "Daniel", "Eder", "Sergio"]
@@ -634,12 +642,12 @@ with aba_dashboard:
                     todos_os_outros = len(df_outros)
 
                     c1, c2, c3,  = st.columns(3)
-                    c1.metric("Sérgio", sergio)
+                    c1.metric("Sergio", sergio)
                     c2.metric("Eder", eder)
                     c3.metric("Daniel", daniel)
 
                     st.markdown("<br>", unsafe_allow_html=True)
-                    df_gest_donut = pd.DataFrame({'categoria': ["Sérgio", "Eder", "Daniel"],'quantidade': [sergio, eder, daniel]})
+                    df_gest_donut = pd.DataFrame({'categoria': ["Sergio", "Eder", "Daniel"],'quantidade': [sergio, eder, daniel]})
                     df_gest_donut = df_gest_donut[df_gest_donut['quantidade'] > 0]
                     
                     if not df_gest_donut.empty:
