@@ -753,7 +753,7 @@ with aba_dashboard:
                         st.info("Sem dados de análise.")
 
         with st.container(border=True):
-            st.markdown("#### Composição: Equipe de Desenvolvimento")
+            st.markdown("#### Equipe de Desenvolvimento")
             
             import re
             
@@ -776,7 +776,7 @@ with aba_dashboard:
                 df_backlog_filtrado['pontos_calc'] = pd.to_numeric(limpeza, errors='coerce').fillna(0.0)
 
             if not df_backlog_filtrado.empty:
-                nomes_devs = ["Felipe", "Kauan", "Gustavo", "Luiz", "Isaías", "Isaias", "Nei", "Guilherme", "João"]
+                nomes_devs = ["Felipe", "Kauan", "Gustavo", "Luiz", "Isaías", "Isaias", "Nei", "Guilherme", "João", "Eder"]
                 
                 df_devs_backlog = df_backlog_filtrado[
                     (df_backlog_filtrado['responsavel'].str.contains('|'.join(nomes_devs), case=False, na=False)) &
@@ -797,8 +797,8 @@ with aba_dashboard:
                     total_pontos = devs_agrupado['Pontos'].sum()
                     
                     col_t1, col_t2 = st.columns(2)
-                    col_t1.metric("Total de Itens (Devs)", total_devs)
-                    col_t2.metric("Total de Pontos Pendentes (Devs)", f"{total_pontos:.1f}")
+                    col_t1.metric("Total de Itens (Pendentes)", total_devs)
+                    col_t2.metric("Total de Pontos (Pendentes)", f"{total_pontos:.1f}")
                     st.divider()
                     
                     devs_agrupado_cards = devs_agrupado.sort_values(by='Quantidade', ascending=False)
@@ -808,11 +808,9 @@ with aba_dashboard:
                     for i, row in devs_agrupado_cards.iterrows():
                         nome_completo = str(row['Responsável'])
                         
-                        nome_limpo = re.sub(r'[^a-zA-ZáéíóúÁÉÍÓÚçÇãõÃÕ ]', '', nome_completo).strip()
-                        nome_curto = nome_limpo.split(" ")[0][:12] if nome_limpo else nome_completo[:12]
                             
                         cols_devs[i % len(cols_devs)].metric(
-                            label=nome_curto, 
+                            label=nome_completo, 
                             value=f"{row['Quantidade']}",
                             delta=f"{row['Pontos']:.1f} pts"
                         )
@@ -823,7 +821,7 @@ with aba_dashboard:
                     altura_grafico = max(250, num_devs * 35)
 
                     with col_graf1:
-                        st.markdown("###### Demanda (Volume de Itens)")
+                        st.markdown("###### Itens restantes por Devs")
                         bar_itens = alt.Chart(devs_agrupado).mark_bar(color="#4CA6FF", cornerRadiusEnd=3).encode(
                             x=alt.X('Quantidade:Q', title='Itens Pendentes', axis=alt.Axis(grid=False)),
                             y=alt.Y('Responsável:N', sort='-x', title=''), 
@@ -833,7 +831,7 @@ with aba_dashboard:
                         st.altair_chart((bar_itens + label_itens).properties(height=altura_grafico), use_container_width=True, theme="streamlit")
 
                     with col_graf2:
-                        st.markdown("###### Esforço Restante (Pontos)")
+                        st.markdown("###### Pontos restantes por Devs")
                         bar_pontos = alt.Chart(devs_agrupado).mark_bar(color="#FF9F43", cornerRadiusEnd=3).encode(
                             x=alt.X('Pontos:Q', title='Pontos Pendentes', axis=alt.Axis(grid=False)),
                             y=alt.Y('Responsável:N', sort='-x', title=''), 
