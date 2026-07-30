@@ -208,91 +208,95 @@ def limpar_snapshot_sprint(id_sprint, fase):
 
 def extrair_e_salvar_backlog(projeto, sprint_id):
     dados_backlog = []
-    next_token = ""
     
+    status_ignorados = '"6.0 Concluído", "6.0 Pend. Merge p/ Homol.", "6.1 Pend. Gerar Artefatos", "6.2 Pend. Envio Homolog.", "7.0 Dispensado", "5.0 Pendência do Usuário", "5.1 Esperando por Aprovação", "5.2 Comercial - Aprovado", "5.3 Pendência de Homolog", "3.3 Revisão de Código", "4.0 A TESTAR", "4.1 Testando", "4.2 Mergear", "4.3 Pend. Versão"'
     
-    
-    jql_backlog = (
-        f'type not in( bug , Ajuste)  AND project in ("{projeto}") '
-        f'AND Sprint in (openSprints(),EMPTY) '
-        f'AND Sprint in (1218)'
-        f'AND status NOT IN ("6.0 Concluído", "6.0 Pend. Merge p/ Homol.", "6.1 Pend. Gerar Artefatos", "6.2 Pend. Envio Homolog.", "7.0 Dispensado", "5.0 Pendência do Usuário", "5.1 Esperando por Aprovação", "5.2 Comercial - Aprovado", "5.3 Pendência de Homolog", "3.3 Revisão de Código", "4.0 A TESTAR", "4.1 Testando", "4.2 Mergear", "4.3 Pend. Versão") '
-        f'ORDER BY created DESC'
-    )
-
-
-    while True:
-        params = {
-            "jql": jql_backlog,
-            "fields": f"assignee,issuetype,summary,{CUSTOM_CLIENTE_FIELD},{CUSTOM_SISTEMA_FIELD},duedate,created,status,{CUSTOM_POINT_FIELD}",
-            "maxResults": 25
+    buscas = [
+        {
+            "sprint_nativa": "SIM",
+            "jql": f'type not in( bug , Ajuste) AND project in ("{projeto}") AND Sprint in (openSprints(),EMPTY) AND status NOT IN ({status_ignorados}) ORDER BY created DESC'
+        },
+        {
+            "sprint_nativa": "NAO",
+            "jql": f'type not in( bug , Ajuste) AND project in ("{projeto}") AND Sprint = 1218 AND status NOT IN ({status_ignorados}) ORDER BY created DESC'
         }
-        
-        if next_token: params["nextPageToken"] = next_token
-        resp = requests.get(f"{JIRA_URL}/rest/api/3/search/jql", headers=headers, auth=auth, params=params, timeout=60)
-        
-        try: resp.raise_for_status()
-        except requests.exceptions.HTTPError as e:
-            print(f"Erro ao buscar backlog: {e}")
-            break
+    ]
 
-        data_json = resp.json()
-
-        for issue in data_json.get("issues", []):
-            key = issue["key"]
+    for busca in buscas:
+        next_token = ""
+        while True:
+            params = {
+                "jql": busca["jql"],
+                "fields": f"assignee,issuetype,summary,{CUSTOM_CLIENTE_FIELD},{CUSTOM_SISTEMA_FIELD},duedate,created,status,{CUSTOM_POINT_FIELD}",
+                "maxResults": 25
+            }
             
-            assignee = issue["fields"].get("assignee")
-            dev_nome = assignee["displayName"] if assignee else "Sem responsável"
+            if next_token: params["nextPageToken"] = next_token
+            resp = requests.get(f"{JIRA_URL}/rest/api/3/search/jql", headers=headers, auth=auth, params=params, timeout=60)
             
-            typeIssue = issue["fields"].get("issuetype") 
-            tipo_item_nome = typeIssue["name"].lower() if typeIssue else "sem tipo"
+            try: resp.raise_for_status()
+            except requests.exceptions.HTTPError as e:
+                print(f"Erro ao buscar backlog: {e}")
+                break
 
-            papel = "Analista" if any(analista in dev_nome for analista in ANALISTAS) else "Desenvolvedor"
-            
-            resumo = issue["fields"].get("summary", "Sem resumo")
-            cliente_nome = extrair_cliente(issue["fields"])
+            data_json = resp.json()
 
-            data_criacao_raw = issue["fields"].get("created", "")
-            data_criacao = data_criacao_raw[:10] if data_criacao_raw else "2000-01-01"
+            for issue in data_json.get("issues", []):
+                key = issue["key"]
+                
+                assignee = issue["fields"].get("assignee")
+                dev_nome = assignee["displayName"] if assignee else "Sem responsável"
+                
+                typeIssue = issue["fields"].get("issuetype") 
+                tipo_item_nome = typeIssue["name"].lower() if typeIssue else "sem tipo"
 
-            status_info = issue["fields"].get("status")
-            status_nome = status_info["name"] if status_info else "Desconhecido"
+                papel = "Analista" if any(analista in dev_nome for analista in ANALISTAS) else "Desenvolvedor"
+                
+                resumo = issue["fields"].get("summary", "Sem resumo")
+                cliente_nome = extrair_cliente(issue["fields"])
 
-            sistema_nome = extrair_sistema(issue["fields"])
+                data_criacao_raw = issue["fields"].get("created", "")
+                data_criacao = data_criacao_raw[:10] if data_criacao_raw else "2000-01-01"
 
-            data_limite_raw = issue["fields"].get("duedate")
-            data_limite = data_limite_raw[:10] if data_limite_raw else None  
+                status_info = issue["fields"].get("status")
+                status_nome = status_info["name"] if status_info else "Desconhecido"
 
-            pontos_raw = issue["fields"].get(CUSTOM_POINT_FIELD)
-            try:
-                if isinstance(pontos_raw, dict) and "value" in pontos_raw:
-                    pontos = str(pontos_raw["value"]) 
-                elif pontos_raw is not None:
-                    pontos = str(pontos_raw)
-                else:
+                sistema_nome = extrair_sistema(issue["fields"])
+
+                data_limite_raw = issue["fields"].get("duedate")
+                data_limite = data_limite_raw[:10] if data_limite_raw else None  
+
+                pontos_raw = issue["fields"].get(CUSTOM_POINT_FIELD)
+                try:
+                    if isinstance(pontos_raw, dict) and "value" in pontos_raw:
+                        pontos = str(pontos_raw["value"]) 
+                    elif pontos_raw is not None:
+                        pontos = str(pontos_raw)
+                    else:
+                        pontos = "0"
+                except Exception:
                     pontos = "0"
-            except Exception:
-                pontos = "0"
 
-            dados_backlog.append({
-                "ID_SPRINT": sprint_id, 
-                "ISSUE_KEY": key,
-                "PROJETO": projeto,
-                "RESPONSAVEL": dev_nome,
-                "PAPEL": papel,
-                "TIPO_ITEM": tipo_item_nome,
-                "RESUMO": resumo,
-                "CLIENTE": cliente_nome, 
-                "DATA_CRIACAO" : data_criacao,
-                "STATUS": status_nome, 
-                "SISTEMA" :  sistema_nome,
-                "DATA_LIMITE": data_limite,
-                "PONTOS": pontos 
-            })
+                dados_backlog.append({
+                    "ID_SPRINT": sprint_id, 
+                    "ISSUE_KEY": key,
+                    "PROJETO": projeto,
+                    "RESPONSAVEL": dev_nome,
+                    "PAPEL": papel,
+                    "TIPO_ITEM": tipo_item_nome,
+                    "RESUMO": resumo,
+                    "CLIENTE": cliente_nome, 
+                    "DATA_CRIACAO" : data_criacao,
+                    "STATUS": status_nome, 
+                    "SISTEMA" :  sistema_nome,
+                    "DATA_LIMITE": data_limite,
+                    "PONTOS": pontos,
+                    "SPRINT_NATIVA": busca["sprint_nativa"]
+                })
 
-        if data_json.get("isLast") or not data_json.get("issues", []): break
-        next_token = data_json.get("nextPageToken")
-        if not next_token: break
+            if data_json.get("isLast") or not data_json.get("issues", []): break
+            next_token = data_json.get("nextPageToken")
+            if not next_token: break
 
     if dados_backlog:
         try:
@@ -302,9 +306,9 @@ def extrair_e_salvar_backlog(projeto, sprint_id):
             
             query = text("""
                 INSERT INTO TB_SPRINT_BACKLOG 
-                (ID_SPRINT, ISSUE_KEY, PROJETO, RESPONSAVEL, PAPEL, TIPO_ITEM, RESUMO, CLIENTE, DATA_CRIACAO, STATUS, SISTEMA, DATA_LIMITE, PONTOS)
+                (ID_SPRINT, ISSUE_KEY, PROJETO, RESPONSAVEL, PAPEL, TIPO_ITEM, RESUMO, CLIENTE, DATA_CRIACAO, STATUS, SISTEMA, DATA_LIMITE, PONTOS, SPRINT_NATIVA)
                 VALUES 
-                (:ID_SPRINT, :ISSUE_KEY, :PROJETO, :RESPONSAVEL, :PAPEL, :TIPO_ITEM, :RESUMO, :CLIENTE, :DATA_CRIACAO, :STATUS, :SISTEMA, :DATA_LIMITE, :PONTOS)
+                (:ID_SPRINT, :ISSUE_KEY, :PROJETO, :RESPONSAVEL, :PAPEL, :TIPO_ITEM, :RESUMO, :CLIENTE, :DATA_CRIACAO, :STATUS, :SISTEMA, :DATA_LIMITE, :PONTOS, :SPRINT_NATIVA)
             """)
             with conn.session as s:
                 s.execute(query, dados_backlog)
@@ -439,32 +443,39 @@ def executar_extracao(data_inicio_input, data_fim_input, descricao_input, fase_s
         
         
         with conn.session as s:
-            query_bk = text("SELECT TIPO_ITEM FROM TB_SPRINT_BACKLOG WHERE ID_SPRINT = :id")
-            itens_bk = s.execute(query_bk, {"id": id_sprint}).fetchall()
+            query_global = text("SELECT TIPO_ITEM FROM TB_SPRINT_BACKLOG WHERE ID_SPRINT = :id")
+            itens_global = s.execute(query_global, {"id": id_sprint}).fetchall()
+            todos_global = [item[0].lower() if item[0] else "" for item in itens_global]
             
-            todos_itens = [item[0].lower() if item[0] else "" for item in itens_bk]
+            tot_sust_global = sum(1 for item in todos_global if item in tipos_sust)
+            tot_desv_global = len(todos_global) - tot_sust_global
+            tot_geral_global = len(todos_global)
             
-            total_sust = sum(1 for item in todos_itens if item in tipos_sust)
-            total_desv = len(todos_itens) - total_sust
-            total_geral = len(todos_itens)
+            query_nativa = text("SELECT TIPO_ITEM FROM TB_SPRINT_BACKLOG WHERE ID_SPRINT = :id AND SPRINT_NATIVA = 'SIM'")
+            itens_nativa = s.execute(query_nativa, {"id": id_sprint}).fetchall()
+            todos_nativa = [item[0].lower() if item[0] else "" for item in itens_nativa]
+            
+            tot_sust_nativa = sum(1 for item in todos_nativa if item in tipos_sust)
+            tot_desv_nativa = len(todos_nativa) - tot_sust_nativa
+            tot_geral_nativa = len(todos_nativa)
             
             query_snap = text("""
                 INSERT INTO TB_SPRINT_SNAPSHOT 
-                (ID_SPRINT, FASE, DESCRICAO_CUSTOMIZADA, QTD_TOTAL, QTD_SUST, QTD_DESV)
+                (ID_SPRINT, FASE, DESCRICAO_CUSTOMIZADA, 
+                 QTD_TOTAL, QTD_SUST, QTD_DESV,
+                 QTD_TOTAL_NATIVA, QTD_SUST_NATIVA, QTD_DESV_NATIVA)
                 VALUES 
-                (:id, :fase, :descricao_snap, :total, :sust, :desv)
+                (:id, :fase, :descricao_snap, 
+                 :total, :sust, :desv,
+                 :tot_nat, :sust_nat, :desv_nat)
             """)
             s.execute(query_snap, {
-                "id": id_sprint,
-                "fase": fase_snapshot,
-                "descricao_snap": desc_snapshot,
-                "total": total_geral,
-                "sust": total_sust,
-                "desv": total_desv
+                "id": id_sprint, "fase": fase_snapshot, "descricao_snap": desc_snapshot,
+                "total": tot_geral_global, "sust": tot_sust_global, "desv": tot_desv_global,
+                "tot_nat": tot_geral_nativa, "sust_nat": tot_sust_nativa, "desv_nat": tot_desv_nativa
             })
             
             s.execute(text("UPDATE TB_SPRINT SET ULTIMA_ATUALIZACAO = NOW() WHERE ID_SPRINT=:id"), {"id": id_sprint})
-            
             s.commit()
         
         return True, f"{msg_validacao} {status_backlog}"

@@ -66,7 +66,9 @@ def carregar_snapshots():
     query = """
         SELECT ID_SNAPSHOT as id, ID_SPRINT as sprint_id, FASE as fase, 
                DESCRICAO_CUSTOMIZADA as descricao, QTD_TOTAL as qtd_total, 
-               QTD_SUST as qtd_sust, QTD_DESV as qtd_desv, DATA_REGISTRO as data_registro
+               QTD_SUST as qtd_sust, QTD_DESV as qtd_desv, 
+               QTD_TOTAL_NATIVA as qtd_total_nativa, QTD_SUST_NATIVA as qtd_sust_nativa, 
+               QTD_DESV_NATIVA as qtd_desv_nativa, DATA_REGISTRO as data_registro
         FROM TB_SPRINT_SNAPSHOT
         ORDER BY DATA_REGISTRO ASC
     """
@@ -79,7 +81,7 @@ def carregar_backlog():
                PROJETO as projeto, RESPONSAVEL as responsavel, PAPEL as papel, 
                TIPO_ITEM as tipo_item, CLIENTE as cliente, RESUMO as resumo, 
                DATA_CRIACAO as data_criacao, STATUS as status, SISTEMA as sistema,
-               DATA_LIMITE as data_limite, PONTOS as pontos
+               DATA_LIMITE as data_limite, PONTOS as pontos, SPRINT_NATIVA as sprint_nativa
         FROM TB_SPRINT_BACKLOG
     """
     return conn.query(query)
@@ -437,12 +439,21 @@ with aba_dashboard:
             tipos_sustentacao = ["erro", "atendimento", "retorno negativo (rn)"]
             df_backlog_filtrado['categoria'] = df_backlog_filtrado['tipo_item'].apply(lambda x: "Sustentação" if str(x).lower() in tipos_sustentacao else "Desenvolvimento")
 
-            def obter_qtd(nome_busca):
-                return len(df_backlog_filtrado[df_backlog_filtrado['responsavel'].str.contains(nome_busca, case=False, na=False)])
+            df_ambas_sprints = df_backlog_filtrado.copy()
 
-            total_itens = len(df_backlog_filtrado)
-            itens_sust = len(df_backlog_filtrado[df_backlog_filtrado['categoria'] == 'Sustentação'])
-            itens_desv = len(df_backlog_filtrado[df_backlog_filtrado['categoria'] == 'Desenvolvimento'])
+            def obter_qtd(nome_busca):
+                if df_ambas_sprints.empty:
+                    return 0
+                return len(df_ambas_sprints[df_ambas_sprints['responsavel'].str.contains(nome_busca, case=False, na=False)])
+
+            if 'sprint_nativa' in df_backlog_filtrado.columns:
+                df_sprint_desenvolvimento = df_backlog_filtrado[df_backlog_filtrado['sprint_nativa'] == 'SIM'].copy()
+            else:
+                df_sprint_desenvolvimento = df_backlog_filtrado.copy()
+
+            total_itens = len(df_sprint_desenvolvimento)
+            itens_sust = len(df_sprint_desenvolvimento[df_sprint_desenvolvimento['categoria'] == 'Sustentação'])
+            itens_desv = len(df_sprint_desenvolvimento[df_sprint_desenvolvimento['categoria'] == 'Desenvolvimento'])
 
             fernando = obter_qtd("Fernando")
             jonathan = obter_qtd("Jonathan Gabriel")
@@ -453,6 +464,7 @@ with aba_dashboard:
             sergio = obter_qtd("Sergio")
             daniel = obter_qtd("Daniel")
             enzo = obter_qtd("Enzo")
+
 
             with st.container(border=True):
                
@@ -752,129 +764,129 @@ with aba_dashboard:
                     else: 
                         st.info("Sem dados de análise.")
 
-        with st.container(border=True):
-            st.markdown("#### Equipe de Desenvolvimento")
-            
-            import re
-            
-            colunas_lower = df_backlog_filtrado.columns.str.lower()
-            if 'pontos' in colunas_lower:
-                col_pts_original = df_backlog_filtrado.columns[colunas_lower.tolist().index('pontos')]
-            elif 'story_points' in colunas_lower:
-                col_pts_original = df_backlog_filtrado.columns[colunas_lower.tolist().index('story_points')]
-            elif 'estimativa' in colunas_lower:
-                col_pts_original = df_backlog_filtrado.columns[colunas_lower.tolist().index('estimativa')]
-            else:
-                col_pts_original = 'pontos_calc'
-                df_backlog_filtrado[col_pts_original] = 0.0
-            
-            if col_pts_original != 'pontos_calc':
-                limpeza = df_backlog_filtrado[col_pts_original].astype(str)
-                limpeza = limpeza.str.replace(',', '.', regex=False)
-                limpeza = limpeza.str.replace(r'[^\d\.]', '', regex=True)
-                limpeza = limpeza.replace('', '0')
-                df_backlog_filtrado['pontos_calc'] = pd.to_numeric(limpeza, errors='coerce').fillna(0.0)
-
-            if not df_backlog_filtrado.empty:
-                nomes_devs = ["Felipe", "Kauan", "Gustavo", "Luiz", "Isaías", "Isaias", "Nei", "Guilherme", "João", "Eder"]
+            with st.container(border=True):
+                st.markdown("#### Equipe de Desenvolvimento")
                 
-                df_devs_backlog = df_backlog_filtrado[
-                    (df_backlog_filtrado['responsavel'].str.contains('|'.join(nomes_devs), case=False, na=False)) &
-                    (df_backlog_filtrado['responsavel'].notna()) & 
-                    (df_backlog_filtrado['responsavel'].str.strip() != "") &
-                    (~df_backlog_filtrado['status'].isin(status_alvo))
-                ].copy()
+                import re
                 
-                if not df_devs_backlog.empty:
-                    devs_agrupado = df_devs_backlog.groupby('responsavel').agg(
-                        Quantidade=('issue_key', 'count'),
-                        Pontos=('pontos_calc', 'sum')
-                    ).reset_index()
-                    
-                    devs_agrupado.rename(columns={'responsavel': 'Responsável'}, inplace=True)
-                    
-                    total_devs = devs_agrupado['Quantidade'].sum()
-                    total_pontos = devs_agrupado['Pontos'].sum()
-                    
-                    col_t1, col_t2 = st.columns(2)
-                    col_t1.metric("Total de Itens (Pendentes)", total_devs)
-                    col_t2.metric("Total de Pontos (Pendentes)", f"{total_pontos:.1f}")
-                    st.divider()
-                    
-                    devs_agrupado_cards = devs_agrupado.sort_values(by='Quantidade', ascending=False)
-                    num_devs = len(devs_agrupado_cards)
-                    cols_devs = st.columns(min(num_devs, 6) if num_devs > 0 else 1) 
-                    
-                    for i, row in devs_agrupado_cards.iterrows():
-                        nome_completo = str(row['Responsável'])
-                        
-                            
-                        cols_devs[i % len(cols_devs)].metric(
-                            label=nome_completo, 
-                            value=f"{row['Quantidade']}",
-                            delta=f"{row['Pontos']:.1f} pts"
-                        )
-                        
-                    st.markdown("<br>", unsafe_allow_html=True)
-                    
-                    col_graf1, col_graf2 = st.columns(2)
-                    altura_grafico = max(250, num_devs * 35)
-
-                    with col_graf1:
-                        st.markdown("###### Itens restantes por Devs")
-                        bar_itens = alt.Chart(devs_agrupado).mark_bar(color="#4CA6FF", cornerRadiusEnd=3).encode(
-                            x=alt.X('Quantidade:Q', title='Itens Pendentes', axis=alt.Axis(grid=False)),
-                            y=alt.Y('Responsável:N', sort='-x', title=''), 
-                            tooltip=['Responsável', 'Quantidade', alt.Tooltip('Pontos:Q', format='.1f')] 
-                        )
-                        label_itens = bar_itens.mark_text(align='left', baseline='middle', dx=3, color='white').encode(text='Quantidade:Q')
-                        st.altair_chart((bar_itens + label_itens).properties(height=altura_grafico), use_container_width=True, theme="streamlit")
-
-                    with col_graf2:
-                        st.markdown("###### Pontos restantes por Devs")
-                        bar_pontos = alt.Chart(devs_agrupado).mark_bar(color="#FF9F43", cornerRadiusEnd=3).encode(
-                            x=alt.X('Pontos:Q', title='Pontos Pendentes', axis=alt.Axis(grid=False)),
-                            y=alt.Y('Responsável:N', sort='-x', title=''), 
-                            tooltip=['Responsável', 'Quantidade', alt.Tooltip('Pontos:Q', format='.1f')] 
-                        )
-                        label_pontos = bar_pontos.mark_text(align='left', baseline='middle', dx=3, color='white').encode(
-                            text=alt.Text('Pontos:Q', format='.1f')
-                        )
-                        st.altair_chart((bar_pontos + label_pontos).properties(height=altura_grafico), use_container_width=True, theme="streamlit")
-                    
-                    with st.expander("Detalhes de itens da Equipe de Desenvolvimento"):
-                        dev_selecionado = st.selectbox(
-                            "Filtrar tarefas de:", 
-                            ["Todos da Equipe"] + devs_agrupado['Responsável'].tolist(),
-                            label_visibility="collapsed"
-                        )
-                        
-                        if dev_selecionado == "Todos da Equipe":
-                            df_detalhe_dev = df_devs_backlog.copy()
-                        else:
-                            df_detalhe_dev = df_devs_backlog[df_devs_backlog['responsavel'] == dev_selecionado].copy()
-                            
-                        if not df_detalhe_dev.empty:
-                            df_detalhe_dev['link'] = "https://ddsinfo.atlassian.net/browse/" + df_detalhe_dev['issue_key']
-                            st.dataframe(
-                                df_detalhe_dev[['issue_key', 'resumo', 'responsavel', 'tipo_item', 'pontos_calc', 'cliente', 'status', 'link']], 
-                                hide_index=True,
-                                use_container_width=True,
-                                column_config={
-                                    "issue_key": "Chave",
-                                    "resumo": st.column_config.TextColumn("Resumo", width="large"),
-                                    "responsavel": "Desenvolvedor",
-                                    "tipo_item": "Tipo",
-                                    "pontos_calc": st.column_config.NumberColumn("Pts", format="%.1f"),
-                                    "cliente": "Cliente",
-                                    "status": "Status",
-                                    "link": st.column_config.LinkColumn("Jira")
-                                }
-                            )
+                colunas_lower = df_sprint_desenvolvimento.columns.str.lower()
+                if 'pontos' in colunas_lower:
+                    col_pts_original = df_sprint_desenvolvimento.columns[colunas_lower.tolist().index('pontos')]
+                elif 'story_points' in colunas_lower:
+                    col_pts_original = df_sprint_desenvolvimento.columns[colunas_lower.tolist().index('story_points')]
+                elif 'estimativa' in colunas_lower:
+                    col_pts_original = df_sprint_desenvolvimento.columns[colunas_lower.tolist().index('estimativa')]
                 else:
-                    st.info("Nenhuma tarefa pendente de desenvolvimento para a equipe no momento.")
-            else:
-                st.info("Backlog vazio ou sem dados para análise.")  
+                    col_pts_original = 'pontos_calc'
+                    df_sprint_desenvolvimento[col_pts_original] = 0.0
+                
+                if col_pts_original != 'pontos_calc':
+                    limpeza = df_sprint_desenvolvimento[col_pts_original].astype(str)
+                    limpeza = limpeza.str.replace(',', '.', regex=False)
+                    limpeza = limpeza.str.replace(r'[^\d\.]', '', regex=True)
+                    limpeza = limpeza.replace('', '0')
+                    df_sprint_desenvolvimento['pontos_calc'] = pd.to_numeric(limpeza, errors='coerce').fillna(0.0)
+
+                if not df_sprint_desenvolvimento.empty:
+                    nomes_devs = ["Felipe", "Kauan", "Gustavo", "Luiz", "Isaías", "Isaias", "Nei", "Guilherme", "João", "Eder"]
+                    
+                    df_devs_backlog = df_sprint_desenvolvimento[
+                        (df_sprint_desenvolvimento['responsavel'].str.contains('|'.join(nomes_devs), case=False, na=False)) &
+                        (df_sprint_desenvolvimento['responsavel'].notna()) & 
+                        (df_sprint_desenvolvimento['responsavel'].str.strip() != "") &
+                        (~df_sprint_desenvolvimento['status'].isin(status_alvo))
+                    ].copy()
+                    
+                    if not df_devs_backlog.empty:
+                        devs_agrupado = df_devs_backlog.groupby('responsavel').agg(
+                            Quantidade=('issue_key', 'count'),
+                            Pontos=('pontos_calc', 'sum')
+                        ).reset_index()
+                        
+                        devs_agrupado.rename(columns={'responsavel': 'Responsável'}, inplace=True)
+                        
+                        total_devs = devs_agrupado['Quantidade'].sum()
+                        total_pontos = devs_agrupado['Pontos'].sum()
+                        
+                        col_t1, col_t2 = st.columns(2)
+                        col_t1.metric("Total de Itens (Pendentes)", total_devs)
+                        col_t2.metric("Total de Pontos (Pendentes)", f"{total_pontos:.1f}")
+                        st.divider()
+                        
+                        devs_agrupado_cards = devs_agrupado.sort_values(by='Quantidade', ascending=False)
+                        num_devs = len(devs_agrupado_cards)
+                        cols_devs = st.columns(min(num_devs, 6) if num_devs > 0 else 1) 
+                        
+                        for i, row in devs_agrupado_cards.iterrows():
+                            nome_completo = str(row['Responsável'])
+                            
+                                
+                            cols_devs[i % len(cols_devs)].metric(
+                                label=nome_completo, 
+                                value=f"{row['Quantidade']}",
+                                delta=f"{row['Pontos']:.1f} pts"
+                            )
+                            
+                        st.markdown("<br>", unsafe_allow_html=True)
+                        
+                        col_graf1, col_graf2 = st.columns(2)
+                        altura_grafico = max(250, num_devs * 35)
+
+                        with col_graf1:
+                            st.markdown("###### Itens restantes por Devs")
+                            bar_itens = alt.Chart(devs_agrupado).mark_bar(color="#4CA6FF", cornerRadiusEnd=3).encode(
+                                x=alt.X('Quantidade:Q', title='Itens Pendentes', axis=alt.Axis(grid=False)),
+                                y=alt.Y('Responsável:N', sort='-x', title=''), 
+                                tooltip=['Responsável', 'Quantidade', alt.Tooltip('Pontos:Q', format='.1f')] 
+                            )
+                            label_itens = bar_itens.mark_text(align='left', baseline='middle', dx=3, color='white').encode(text='Quantidade:Q')
+                            st.altair_chart((bar_itens + label_itens).properties(height=altura_grafico), use_container_width=True, theme="streamlit")
+
+                        with col_graf2:
+                            st.markdown("###### Pontos restantes por Devs")
+                            bar_pontos = alt.Chart(devs_agrupado).mark_bar(color="#FF9F43", cornerRadiusEnd=3).encode(
+                                x=alt.X('Pontos:Q', title='Pontos Pendentes', axis=alt.Axis(grid=False)),
+                                y=alt.Y('Responsável:N', sort='-x', title=''), 
+                                tooltip=['Responsável', 'Quantidade', alt.Tooltip('Pontos:Q', format='.1f')] 
+                            )
+                            label_pontos = bar_pontos.mark_text(align='left', baseline='middle', dx=3, color='white').encode(
+                                text=alt.Text('Pontos:Q', format='.1f')
+                            )
+                            st.altair_chart((bar_pontos + label_pontos).properties(height=altura_grafico), use_container_width=True, theme="streamlit")
+                        
+                        with st.expander("Detalhes de itens da Equipe de Desenvolvimento"):
+                            dev_selecionado = st.selectbox(
+                                "Filtrar tarefas de:", 
+                                ["Todos da Equipe"] + devs_agrupado['Responsável'].tolist(),
+                                label_visibility="collapsed"
+                            )
+                            
+                            if dev_selecionado == "Todos da Equipe":
+                                df_detalhe_dev = df_devs_backlog.copy()
+                            else:
+                                df_detalhe_dev = df_devs_backlog[df_devs_backlog['responsavel'] == dev_selecionado].copy()
+                                
+                            if not df_detalhe_dev.empty:
+                                df_detalhe_dev['link'] = "https://ddsinfo.atlassian.net/browse/" + df_detalhe_dev['issue_key']
+                                st.dataframe(
+                                    df_detalhe_dev[['issue_key', 'resumo', 'responsavel', 'tipo_item', 'pontos_calc', 'cliente', 'status', 'link']], 
+                                    hide_index=True,
+                                    use_container_width=True,
+                                    column_config={
+                                        "issue_key": "Chave",
+                                        "resumo": st.column_config.TextColumn("Resumo", width="large"),
+                                        "responsavel": "Desenvolvedor",
+                                        "tipo_item": "Tipo",
+                                        "pontos_calc": st.column_config.NumberColumn("Pts", format="%.1f"),
+                                        "cliente": "Cliente",
+                                        "status": "Status",
+                                        "link": st.column_config.LinkColumn("Jira")
+                                    }
+                                )
+                    else:
+                        st.info("Nenhuma tarefa pendente de desenvolvimento para a equipe no momento.")
+                else:
+                    st.info("Backlog vazio ou sem dados para análise.")  
 
 
         st.divider()
@@ -950,14 +962,21 @@ with aba_dashboard:
         else:
             st.info("Nenhuma entrega contabilizada.")
 
-        st.divider()
         st.subheader("Burndown da Sprint")
 
-        visao_burndown = st.radio(
-            "Selecione a Visão do Burndown:", 
-            ["Geral", "Sustentação", "Desenvolvimento"], 
-            horizontal=True
-        )
+        col_b1, col_b2 = st.columns(2)
+        with col_b1:
+            escopo_burndown = st.radio(
+                "Escopo:", 
+                ["Somente Desenvolvedores", "Toda a Equipe"], 
+                horizontal=True
+            )
+        with col_b2:
+            visao_burndown = st.radio(
+                "Visão:", 
+                ["Geral", "Sustentação", "Desenvolvimento"], 
+                horizontal=True
+            )
 
         col1, col2, col3 = st.columns([2, 1, 1])
         with col1:
@@ -976,18 +995,26 @@ with aba_dashboard:
             if not df_filtrado.empty and 'categoria' not in df_filtrado.columns:
                 df_filtrado['categoria'] = df_filtrado['tipo_item'].apply(lambda x: "Sustentação" if str(x).lower() in tipos_sustentacao else "Desenvolvimento")
 
+            
+            if escopo_burndown == "Somente Desenvolvedores":
+                df_base = df_sprint_desenvolvimento.copy() if 'df_sprint_desenvolvimento' in locals() else df_backlog_filtrado.copy()
+                col_snap_prefix = 'qtd_{}_nativa'
+            else:
+                df_base = df_ambas_sprints.copy() if 'df_ambas_sprints' in locals() else df_backlog_filtrado.copy()
+                col_snap_prefix = 'qtd_{}'
+
             if visao_burndown == "Geral":
-                df_backlog_ativo = df_backlog_filtrado.copy()
+                df_backlog_ativo = df_base.copy()
                 df_filtrado_ativo = df_filtrado.copy()
-                col_snapshot = 'qtd_total'
+                col_snapshot = col_snap_prefix.format('total')
             elif visao_burndown == "Sustentação":
-                df_backlog_ativo = df_backlog_filtrado[df_backlog_filtrado['categoria'] == 'Sustentação'].copy() if not df_backlog_filtrado.empty else pd.DataFrame()
+                df_backlog_ativo = df_base[df_base['categoria'] == 'Sustentação'].copy() if not df_base.empty else pd.DataFrame()
                 df_filtrado_ativo = df_filtrado[df_filtrado['categoria'] == 'Sustentação'].copy() if not df_filtrado.empty else pd.DataFrame()
-                col_snapshot = 'qtd_sust'
+                col_snapshot = col_snap_prefix.format('sust')
             else: 
-                df_backlog_ativo = df_backlog_filtrado[df_backlog_filtrado['categoria'] == 'Desenvolvimento'].copy() if not df_backlog_filtrado.empty else pd.DataFrame()
+                df_backlog_ativo = df_base[df_base['categoria'] == 'Desenvolvimento'].copy() if not df_base.empty else pd.DataFrame()
                 df_filtrado_ativo = df_filtrado[df_filtrado['categoria'] == 'Desenvolvimento'].copy() if not df_filtrado.empty else pd.DataFrame()
-                col_snapshot = 'qtd_desv'
+                col_snapshot = col_snap_prefix.format('desv')
 
             total_atual_pendentes = len(df_backlog_ativo)
             tickets_iniciais = total_atual_pendentes + len(df_filtrado_ativo)
@@ -996,7 +1023,9 @@ with aba_dashboard:
                 snaps_sp = df_snapshots[df_snapshots['sprint_id'] == id_sprint].copy()
                 snaps_inicio = snaps_sp[snaps_sp['fase'] == 'INICIO']
                 if not snaps_inicio.empty:
-                    tickets_iniciais = snaps_inicio.iloc[-1][col_snapshot]
+                    valor_snap = snaps_inicio.iloc[-1].get(col_snapshot, 0)
+                    if pd.notnull(valor_snap) and valor_snap > 0:
+                        tickets_iniciais = valor_snap
 
             data_ini_str = df_sprints[df_sprints['nome_exibicao'] == sprint_selecionada]['data_inicio'].iloc[0]
             data_fim_str = df_sprints[df_sprints['nome_exibicao'] == sprint_selecionada]['data_fim'].iloc[0]
@@ -1163,52 +1192,9 @@ with aba_dashboard:
             df_burndown['Média Entrega Diária'] = pd.to_numeric(df_burndown['Média Entrega Diária'], errors='coerce')
             df_burndown['Média por Sprint'] = pd.to_numeric(df_burndown['Média por Sprint'], errors='coerce')
 
-            anotacoes_rows = []
-
-            def _registrar_picos(historico, col_nome, datas_sprint):
-                candidatos_max = []  
-                candidatos_min = []
-
-                for offset in range(len(datas_sprint)):
-                    info = historico.get(offset)
-                    if info and isinstance(info, dict):
-                        candidatos_max.append((info['max_val'], info['max_sp'], offset))
-                        candidatos_min.append((info['min_val'], info['min_sp'], offset))
-
-                if not candidatos_max or not candidatos_min:
-                    return
-
-                val_max, sp_max, offset_max = max(candidatos_max, key=lambda x: x[0])
-                val_min, sp_min, offset_min = min(candidatos_min, key=lambda x: x[0])
-
-                data_max = datas_sprint[offset_max].strftime("%d/%m")
-                data_min = datas_sprint[offset_min].strftime("%d/%m")
-
-                anotacoes_rows.append({
-                    'Data': data_max,
-                    'Valor': val_max,
-                    'Label': f"▲ {val_max:.0f} | {sp_max} | {data_max}",
-                    'Tipo': f'Pico Máx — {col_nome}',
-                    'Cor': '#2ECC71',
-                    'dy': -18,
-                })
-                anotacoes_rows.append({
-                    'Data': data_min,
-                    'Valor': val_min,
-                    'Label': f"▼ {val_min:.0f} | {sp_min} | {data_min}",
-                    'Tipo': f'Pico Mín — {col_nome}',
-                    'Cor': '#74B9FF',
-                    'dy': 18,
-                })
-
-            if show_media_entrega and any(isinstance(historico_dias_entrega.get(o), dict) for o in range(qtd_dias)):
-                _registrar_picos(historico_dias_entrega, 'Entrega Diária', dias_sprint)
-
-            if show_media_sprint and any(isinstance(historico_restante.get(o), dict) for o in range(qtd_dias)):
-                _registrar_picos(historico_restante, 'Trabalho Rest.', dias_sprint)
-
-            df_anotacoes = pd.DataFrame(anotacoes_rows) if anotacoes_rows else pd.DataFrame()
-
+            # ========================================================
+            # MONTAGEM DO GRÁFICO (Limpo, sem picos)
+            # ========================================================
             legenda_itens = [
                 '<div><b style="color: gray;">- - -</b> Diretriz Ideal</div>',
                 '<div><b style="color: #4CA6FF;">━●━</b> Trabalho Restante</div>',
@@ -1216,12 +1202,8 @@ with aba_dashboard:
             ]
             if show_media_entrega:
                 legenda_itens.append('<div><b style="color: #FF9F43;">- - -</b> Média Entrega Diária</div>')
-                legenda_itens.append('<div><b style="color: #2ECC71;">◆</b> Pico Máx — Entrega Diária</div>')
-                legenda_itens.append('<div><b style="color: #74B9FF;">◆</b> Pico Mín — Entrega Diária</div>')
             if show_media_sprint:
                 legenda_itens.append('<div><b style="color: #8E44AD;">- - -</b> Média por Sprint</div>')
-                legenda_itens.append('<div><b style="color: #2ECC71;">◆</b> Pico Máx — Trabalho Rest.</div>')
-                legenda_itens.append('<div><b style="color: #74B9FF;">◆</b> Pico Mín — Trabalho Rest.</div>')
 
             st.markdown(
                 '<div style="display:flex;flex-wrap:wrap;justify-content:center;gap:20px;font-size:14px;margin-bottom:15px;">'
@@ -1244,11 +1226,13 @@ with aba_dashboard:
                 df_serie = df_serie.dropna(subset=['Valor'])
                 if df_serie.empty:
                     return None
+                
                 mark_kwargs = dict(color=cor, strokeWidth=stroke_width)
                 if stroke_dash:
                     mark_kwargs['strokeDash'] = stroke_dash
                 if point:
                     mark_kwargs['point'] = True
+                    
                 return (
                     alt.Chart(df_serie)
                     .mark_line(**mark_kwargs)
@@ -1275,54 +1259,11 @@ with aba_dashboard:
 
             if show_media_entrega:
                 c = _make_serie(df_burndown, 'Média Entrega Diária', '#FF9F43', [2, 2], False, 3)
-                if c is not None:
-                    camadas.append(c)
+                if c is not None: camadas.append(c)
 
             if show_media_sprint:
                 c = _make_serie(df_burndown, 'Média por Sprint', '#8E44AD', [4, 2], False, 3)
-                if c is not None:
-                    camadas.append(c)
-
-            if not df_anotacoes.empty:
-                for _, ann_row in df_anotacoes.iterrows():
-                    df_ann = pd.DataFrame([{'Data': ann_row['Data'],
-                                            'Valor': ann_row['Valor'],
-                                            'Label': ann_row['Label']}])
-                    cor_ann = ann_row['Cor']
-                    dy_ann  = int(ann_row['dy'])
-
-                    df_ann['Tipo'] = ann_row['Tipo']
-                    ponto = (
-                        alt.Chart(df_ann)
-                        .mark_point(size=150, color=cor_ann, filled=True, opacity=0.95, shape='diamond')
-                        .encode(
-                            x=alt.X('Data:O', sort=None),
-                            y=alt.Y('Valor:Q'),
-                            tooltip=[
-                                alt.Tooltip('Tipo:N', title='📌 Marcador'),
-                                alt.Tooltip('Label:N', title='Detalhe'),
-                                alt.Tooltip('Valor:Q', title='Valor', format='.1f'),
-                                alt.Tooltip('Data:O', title='Dia'),
-                            ]
-                        )
-                    )
-                    texto = (
-                        alt.Chart(df_ann)
-                        .mark_text(
-                            dy=dy_ann,
-                            fontSize=11,
-                            fontWeight='bold',
-                            color=cor_ann,
-                            align='center',
-                        )
-                        .encode(
-                            x=alt.X('Data:O', sort=None),
-                            y=alt.Y('Valor:Q'),
-                            text=alt.Text('Label:N'),
-                        )
-                    )
-                    camadas.append(ponto)
-                    camadas.append(texto)
+                if c is not None: camadas.append(c)
 
             if camadas:
                 grafico_burndown = alt.layer(*camadas).resolve_scale(y='shared').properties(height=420)
