@@ -74,7 +74,6 @@ def obter_dados_projeto(projeto):
             changelog = issue.get("changelog", {}).get("histories", [])
             
             status_alvo_lower = [s.lower() for s in status_alvo]
-
             datas_entrada_alvo = []
 
             for hist in sorted(changelog, key=lambda x: x["created"], reverse=True):
@@ -102,9 +101,17 @@ def obter_dados_projeto(projeto):
 
             assignee = issue["fields"].get("assignee")
             dev = assignee["displayName"] if assignee else "Sem responsável"
+            
             pontos_raw = issue["fields"].get(CUSTOM_POINT_FIELD)
-            try: pontos = int(pontos_raw["value"]) if pontos_raw and "value" in pontos_raw else 0
-            except (ValueError, TypeError): pontos = 0
+            try:
+                if isinstance(pontos_raw, dict) and "value" in pontos_raw:
+                    pontos = int(float(pontos_raw["value"]))
+                elif pontos_raw is not None:
+                    pontos = int(float(pontos_raw))
+                else:
+                    pontos = 0
+            except (ValueError, TypeError):
+                pontos = 0
             
             typeIssue = issue["fields"].get("issuetype") 
             tipo_item_nome = typeIssue["name"].lower() if typeIssue else "sem tipo"
@@ -186,8 +193,6 @@ def obter_dados_projeto(projeto):
 
     return dados
 
-ANALISTAS = ["Fernando", "Anderson", "Gustavo", "Nathan"]
-
 def limpar_snapshot_sprint(id_sprint, fase):
     try:
 
@@ -214,11 +219,11 @@ def extrair_e_salvar_backlog(projeto, sprint_id):
     buscas = [
         {
             "sprint_nativa": "SIM",
-            "jql": f'type not in( bug , Ajuste) AND project in ("{projeto}") AND Sprint in (openSprints(),EMPTY) AND status NOT IN ({status_ignorados}) ORDER BY created DESC'
+            "jql": f'type not in( bug ) AND project in ("{projeto}") AND Sprint in (openSprints(),EMPTY) AND status NOT IN ({status_ignorados}) ORDER BY created DESC'
         },
         {
             "sprint_nativa": "NAO",
-            "jql": f'type not in( bug , Ajuste) AND project in ("{projeto}") AND Sprint = 1218 AND status NOT IN ({status_ignorados}) ORDER BY created DESC'
+            "jql": f'type not in( bug ) AND project in ("{projeto}") AND Sprint = 1218 AND status NOT IN ({status_ignorados}) ORDER BY created DESC'
         }
     ]
 
