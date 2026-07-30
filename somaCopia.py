@@ -223,7 +223,7 @@ def extrair_e_salvar_backlog(projeto, sprint_id):
         },
         {
             "sprint_nativa": "NAO",
-            "jql": f'type not in( bug ) AND project in ("{projeto}") AND Sprint = 1218 AND status NOT IN ({status_ignorados}) ORDER BY created DESC'
+            "jql": f'type not in( bug ) AND project in ("{projeto}") AND Sprint = "Backlog 2" AND status NOT IN ({status_ignorados}) ORDER BY created DESC'
         }
     ]
 
