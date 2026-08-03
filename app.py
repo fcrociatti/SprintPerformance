@@ -289,6 +289,7 @@ with aba_sincronizacao:
                             if sucesso:
                                 st.success(f"✅ Dados importados!")
                                 st.cache_data.clear()
+                                st.rerun()
                             else: 
                                 st.error(f"❌ Falha: {mensagem}")
 
@@ -353,6 +354,7 @@ with aba_sincronizacao:
                         if sucesso:
                             st.success(f"✅ Dados atualizados!")
                             st.cache_data.clear()
+                            st.rerun()
                         else: st.error(f"❌ Falha: {mensagem}")
         else: st.warning("Nenhuma Sprint cadastrada para atualizar.")
 
@@ -853,7 +855,9 @@ with aba_dashboard:
                                 text=alt.Text('Pontos:Q', format='.1f')
                             )
                             st.altair_chart((bar_pontos + label_pontos).properties(height=altura_grafico), use_container_width=True, theme="streamlit")
+
                         
+
                         with st.expander("Detalhes de itens da Equipe de Desenvolvimento"):
                             dev_selecionado = st.selectbox(
                                 "Filtrar tarefas de:", 
@@ -1170,7 +1174,13 @@ with aba_dashboard:
             bd_dados = []
             passo_ideal = tickets_iniciais / (qtd_dias - 1) if qtd_dias > 1 else 0
             hoje = datetime.now().date()
-            ultimo_valor_conhecido = tickets_iniciais
+            # Antes começava com ultimo_valor_conhecido = tickets_iniciais e ficava "preso" nesse valor
+            # (ou em 0, quando não havia backlog sincronizado ainda) até achar o primeiro dado real.
+            # Isso desenhava uma linha reta em 0/errada nos dias sem snapshot, dando a impressão de que
+            # o trabalho já estava zerado, quando na verdade é que nunca existiu sincronização pra esse dia
+            # (ex.: dias em que a extração falhava por causa do bug do ANALISTAS). Agora deixamos None
+            # (lacuna no gráfico) até o primeiro dado real conhecido.
+            ultimo_valor_conhecido = None
             total_concluidos_acumulado = 0 
 
             for i, dia in enumerate(dias_sprint):

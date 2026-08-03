@@ -18,6 +18,10 @@ CUSTOM_CLIENTE_FIELD = "customfield_10133"
 
 
 TIPOS_SUSTENTACAO = ["erro", "atendimento","Retorno Negativo (RN)"]
+
+# Usado em extrair_e_salvar_backlog para classificar RESPONSAVEL em PAPEL (Analista/Desenvolvedor).
+# Mesmo conjunto de nomes já usado na composição "Equipe de Análise" do dashboard (app.py).
+ANALISTAS = ["Fernando", "Jonathan Gabriel", "Thiago", "Paulo", "Kaic de Castro", "Enzo"]
 status_alvo = [
     "3.3 Revisão de Código","4.0 A TESTAR", "4.2 Mergear", "4.3 Pend. Versão",
     "4.4 A Testar (homologação)", "4.5 A testar (artefato)", "3.2 Reprovados",
@@ -216,16 +220,23 @@ def extrair_e_salvar_backlog(projeto, sprint_id):
     
     status_ignorados = '"6.0 Concluído", "6.0 Pend. Merge p/ Homol.", "6.1 Pend. Gerar Artefatos", "6.2 Pend. Envio Homolog.", "7.0 Dispensado", "5.0 Pendência do Usuário", "5.1 Esperando por Aprovação", "5.2 Comercial - Aprovado", "5.3 Pendência de Homolog", "3.3 Revisão de Código", "4.0 A TESTAR", "4.1 Testando", "4.2 Mergear", "4.3 Pend. Versão"'
     
+    # SIM = item já está na sprint de desenvolvimento ativa (planejado para dev).
+    # NAO = item ainda está parado na sprint-backlog (1218), com analistas/gestão, sem dev planejado.
+    # Importante: não incluir "EMPTY" na busca SIM -> item sem sprint nenhuma não é "planejado",
+    # senão ele é contado como desenvolvimento indevidamente e nunca aparece em nenhuma das duas buscas.
     buscas = [
         {
             "sprint_nativa": "SIM",
-            "jql": f'type not in( bug ) AND project in ("{projeto}") AND Sprint in (openSprints(),EMPTY) AND status NOT IN ({status_ignorados}) ORDER BY created DESC'
+            "jql": f'type not in( bug ) AND project in ("{projeto}") AND Sprint in (openSprints()) AND status NOT IN ({status_ignorados}) ORDER BY created DESC'
         },
         {
             "sprint_nativa": "NAO",
-            "jql": f'type not in( bug ) AND project in ("{projeto}") AND Sprint = "Backlog 2" AND status NOT IN ({status_ignorados}) ORDER BY created DESC'
+            "jql": f'type not in( bug ) AND project in ("{projeto}") AND Sprint = 1218 AND status NOT IN ({status_ignorados}) ORDER BY created DESC'
         }
     ]
+
+    if 'logs_jira' not in st.session_state:
+        st.session_state['logs_jira'] = []
 
     for busca in buscas:
         next_token = ""
@@ -241,7 +252,12 @@ def extrair_e_salvar_backlog(projeto, sprint_id):
             
             try: resp.raise_for_status()
             except requests.exceptions.HTTPError as e:
-                print(f"Erro ao buscar backlog: {e}")
+                # Antes esse erro só ia pro console (print) e sumia -> por isso "não achava nada"
+                # sem explicação nenhuma. Agora ele fica visível no dashboard/log de sincronização.
+                msg = (f"❌ Falha na busca de backlog [{projeto} / sprint_nativa={busca['sprint_nativa']}]: "
+                       f"HTTP {resp.status_code} - {resp.text[:500]}")
+                print(msg)
+                st.session_state['logs_jira'].append(msg)
                 break
 
             data_json = resp.json()
@@ -306,7 +322,10 @@ def extrair_e_salvar_backlog(projeto, sprint_id):
     if dados_backlog:
         try:
             with conn.session as s:
-                s.execute(text("DELETE FROM TB_SPRINT_BACKLOG WHERE ID_SPRINT = :id"), {"id": sprint_id})
+                # Filtra por PROJETO também: sem isso, ao chamar essa função duas vezes
+                # (uma por STAR, outra por ELFA) a segunda chamada apaga o resultado da primeira,
+                # pois o DELETE limpava a sprint inteira em vez de só os itens daquele projeto.
+                s.execute(text("DELETE FROM TB_SPRINT_BACKLOG WHERE ID_SPRINT = :id AND PROJETO = :projeto"), {"id": sprint_id, "projeto": projeto})
                 s.commit()
             
             query = text("""
@@ -440,7 +459,8 @@ def executar_extracao(data_inicio_input, data_fim_input, descricao_input, fase_s
         
         if fim >= hoje:
             extrair_e_salvar_backlog("STAR", id_sprint)
-            status_backlog = "Pontos (STAR e ELFA) e Snapshot do Backlog (STAR) atualizados."
+            extrair_e_salvar_backlog("ELFA", id_sprint)
+            status_backlog = "Pontos (STAR e ELFA) e Snapshot do Backlog (STAR e ELFA) atualizados."
         else:
             status_backlog = "Apenas pontos (STAR e ELFA) atualizados (Snapshot do Backlog preservado, pois a sprint já foi encerrada)."
             print(f"🔒 Sprint encerrada em {fim.strftime('%d/%m/%Y')}. Snapshot do backlog preservado.")
