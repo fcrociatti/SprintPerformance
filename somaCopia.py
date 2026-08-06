@@ -216,14 +216,15 @@ def limpar_snapshot_sprint(id_sprint, fase):
 
 
 def extrair_e_salvar_backlog(projeto, sprint_id):
+    # Declarada diretamente no escopo local para garantir a leitura na instância
+    ANALISTAS = ["Fernando", "Jonathan Gabriel", "Thiago", "Paulo", "Kaic de Castro", "Enzo"]
+    
     dados_backlog = []
     
     status_ignorados = '"6.0 Concluído", "6.0 Pend. Merge p/ Homol.", "6.1 Pend. Gerar Artefatos", "6.2 Pend. Envio Homolog.", "7.0 Dispensado", "5.0 Pendência do Usuário", "5.1 Esperando por Aprovação", "5.2 Comercial - Aprovado", "5.3 Pendência de Homolog", "3.3 Revisão de Código", "4.0 A TESTAR", "4.1 Testando", "4.2 Mergear", "4.3 Pend. Versão"'
     
     # SIM = item já está na sprint de desenvolvimento ativa (planejado para dev).
     # NAO = item ainda está parado na sprint-backlog (1218), com analistas/gestão, sem dev planejado.
-    # Importante: não incluir "EMPTY" na busca SIM -> item sem sprint nenhuma não é "planejado",
-    # senão ele é contado como desenvolvimento indevidamente e nunca aparece em nenhuma das duas buscas.
     buscas = [
         {
             "sprint_nativa": "SIM",
@@ -231,7 +232,7 @@ def extrair_e_salvar_backlog(projeto, sprint_id):
         },
         {
             "sprint_nativa": "NAO",
-            "jql": f'type not in( bug ) AND project in ("{projeto}") AND Sprint = 1218 AND status NOT IN ({status_ignorados}) ORDER BY created DESC'
+            "jql": f'type not in( bug ) AND project in ("{projeto}") AND Sprint = "Backlog 2" AND status NOT IN ({status_ignorados}) ORDER BY created DESC'
         }
     ]
 
@@ -252,8 +253,6 @@ def extrair_e_salvar_backlog(projeto, sprint_id):
             
             try: resp.raise_for_status()
             except requests.exceptions.HTTPError as e:
-                # Antes esse erro só ia pro console (print) e sumia -> por isso "não achava nada"
-                # sem explicação nenhuma. Agora ele fica visível no dashboard/log de sincronização.
                 msg = (f"❌ Falha na busca de backlog [{projeto} / sprint_nativa={busca['sprint_nativa']}]: "
                        f"HTTP {resp.status_code} - {resp.text[:500]}")
                 print(msg)
@@ -322,9 +321,6 @@ def extrair_e_salvar_backlog(projeto, sprint_id):
     if dados_backlog:
         try:
             with conn.session as s:
-                # Filtra por PROJETO também: sem isso, ao chamar essa função duas vezes
-                # (uma por STAR, outra por ELFA) a segunda chamada apaga o resultado da primeira,
-                # pois o DELETE limpava a sprint inteira em vez de só os itens daquele projeto.
                 s.execute(text("DELETE FROM TB_SPRINT_BACKLOG WHERE ID_SPRINT = :id AND PROJETO = :projeto"), {"id": sprint_id, "projeto": projeto})
                 s.commit()
             
@@ -343,7 +339,6 @@ def extrair_e_salvar_backlog(projeto, sprint_id):
         except Exception as e:
             print(f"❌ Erro ao salvar backlog no MySQL: {e}")
             raise e
-
 
 def sincronizar_com_banco(dados_extracao, projeto_nome, sprint_id):
     
