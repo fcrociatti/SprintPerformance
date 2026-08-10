@@ -1544,7 +1544,7 @@ with aba_dashboard:
                 df_critico['link'] = "https://ddsinfo.atlassian.net/browse/" + df_critico['issue_key']
                 
                 st.dataframe(
-                    df_critico[['Alerta', 'link', 'cliente', 'resumo', 'responsavel', 'Prazo']],
+                    df_critico[['Alerta', 'link', 'cliente', 'resumo', 'responsavel','status', 'Prazo']],
                     use_container_width=True, hide_index=True,
                     column_config={
                         "Alerta": st.column_config.TextColumn("Status", width="small"),
@@ -1557,6 +1557,7 @@ with aba_dashboard:
                         "cliente": "Cliente",
                         "resumo": "Tarefa",
                         "responsavel": "Responsável",
+                        "status": "Status Atual",
                         "Prazo": st.column_config.TextColumn("Data Limite", width="small")
                     }
                 )
