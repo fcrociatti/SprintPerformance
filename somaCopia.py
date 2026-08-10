@@ -15,12 +15,11 @@ CUSTOM_SISTEMA_FIELD = "customfield_10079"
 CUSTOM_POINT_FIELD = "customfield_10069" 
 CUSTOM_DATE_FIELD = "customfield_10231" 
 CUSTOM_CLIENTE_FIELD = "customfield_10133"  
+CUSTOM_DEV_INICIAL_FIELD = "customfield_10594"
 
 
 TIPOS_SUSTENTACAO = ["erro", "atendimento","Retorno Negativo (RN)"]
 
-# Usado em extrair_e_salvar_backlog para classificar RESPONSAVEL em PAPEL (Analista/Desenvolvedor).
-# Mesmo conjunto de nomes já usado na composição "Equipe de Análise" do dashboard (app.py).
 ANALISTAS = ["Fernando", "Jonathan Gabriel", "Thiago", "Paulo", "Kaic de Castro", "Enzo"]
 status_alvo = [
     "3.3 Revisão de Código","4.0 A TESTAR", "4.2 Mergear", "4.3 Pend. Versão",
@@ -56,13 +55,31 @@ def extrair_sistema(issue_fields):
             return str(sistema_raw)
     return "Sem Sistema"
 
+def extrair_dev_inicial(issue_fields):
+    """
+    Campo "Dev Inicial" do Jira: usado na Gestão de RN's pra saber quem
+    originalmente trabalhou no item pai, independente de quem é o RESPONSAVEL
+    atual. Se o campo estiver vazio no Jira (ou o ID do campo ainda não tiver
+    sido configurado em CUSTOM_DEV_INICIAL_FIELD), retorna None -> a info fica
+    em branco na tela, em vez de mostrar um valor incorreto/adivinhado.
+    """
+    raw = issue_fields.get(CUSTOM_DEV_INICIAL_FIELD)
+    if not raw:
+        return None
+    if isinstance(raw, dict):
+        # Campo de usuário do Jira normalmente vem como {"displayName": "...", ...}
+        return raw.get("displayName") or raw.get("value") or None
+    if isinstance(raw, str):
+        return raw
+    return str(raw)
+
 def obter_dados_projeto(projeto):
     dados = []
     next_token = ""
     while True:
         jql = f'project = "{projeto}" AND TYPE != Bug ORDER BY created DESC'
         
-        params = {"jql": jql, "fields": f"{CUSTOM_SISTEMA_FIELD},{CUSTOM_POINT_FIELD},{CUSTOM_DATE_FIELD},assignee,status,issuetype,summary,{CUSTOM_CLIENTE_FIELD},duedate,created", "expand": "changelog", "maxResults": 25}
+        params = {"jql": jql, "fields": f"{CUSTOM_SISTEMA_FIELD},{CUSTOM_POINT_FIELD},{CUSTOM_DATE_FIELD},{CUSTOM_DEV_INICIAL_FIELD},assignee,status,issuetype,summary,{CUSTOM_CLIENTE_FIELD},duedate,created", "expand": "changelog", "maxResults": 25}
         
         if next_token: params["nextPageToken"] = next_token
         resp = requests.get(f"{JIRA_URL}/rest/api/3/search/jql", headers=headers, auth=auth, params=params, timeout=60)
@@ -161,7 +178,8 @@ def obter_dados_projeto(projeto):
                 "Status" : status_nome,
                 "Sistema" : sistema_nome,
                 "data_limite": data_limite,
-                "data_criacao": data_criacao  
+                "data_criacao": data_criacao,
+                "Dev_Inicial": extrair_dev_inicial(issue["fields"])
             })
 
             data_iso = periodo_inicio.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "+0000"
@@ -225,6 +243,8 @@ def extrair_e_salvar_backlog(projeto, sprint_id):
     
     # SIM = item já está na sprint de desenvolvimento ativa (planejado para dev).
     # NAO = item ainda está parado na sprint-backlog (1218), com analistas/gestão, sem dev planejado.
+    # Importante: não incluir "EMPTY" na busca SIM -> item sem sprint nenhuma não é "planejado",
+    # senão ele é contado como desenvolvimento indevidamente e nunca aparece em nenhuma das duas buscas.
     buscas = [
         {
             "sprint_nativa": "SIM",
@@ -232,7 +252,7 @@ def extrair_e_salvar_backlog(projeto, sprint_id):
         },
         {
             "sprint_nativa": "NAO",
-            "jql": f'type not in( bug ) AND project in ("{projeto}") AND Sprint = "Backlog 2" AND status NOT IN ({status_ignorados}) ORDER BY created DESC'
+            "jql": f'type not in( bug ) AND project in ("{projeto}") AND Sprint = 1218 AND status NOT IN ({status_ignorados}) ORDER BY created DESC'
         }
     ]
 
@@ -244,7 +264,7 @@ def extrair_e_salvar_backlog(projeto, sprint_id):
         while True:
             params = {
                 "jql": busca["jql"],
-                "fields": f"assignee,issuetype,summary,{CUSTOM_CLIENTE_FIELD},{CUSTOM_SISTEMA_FIELD},duedate,created,status,{CUSTOM_POINT_FIELD}",
+                "fields": f"assignee,issuetype,summary,{CUSTOM_CLIENTE_FIELD},{CUSTOM_SISTEMA_FIELD},duedate,created,status,{CUSTOM_POINT_FIELD},{CUSTOM_DEV_INICIAL_FIELD}",
                 "maxResults": 25
             }
             
@@ -253,6 +273,8 @@ def extrair_e_salvar_backlog(projeto, sprint_id):
             
             try: resp.raise_for_status()
             except requests.exceptions.HTTPError as e:
+                # Antes esse erro só ia pro console (print) e sumia -> por isso "não achava nada"
+                # sem explicação nenhuma. Agora ele fica visível no dashboard/log de sincronização.
                 msg = (f"❌ Falha na busca de backlog [{projeto} / sprint_nativa={busca['sprint_nativa']}]: "
                        f"HTTP {resp.status_code} - {resp.text[:500]}")
                 print(msg)
@@ -311,7 +333,8 @@ def extrair_e_salvar_backlog(projeto, sprint_id):
                     "SISTEMA" :  sistema_nome,
                     "DATA_LIMITE": data_limite,
                     "PONTOS": pontos,
-                    "SPRINT_NATIVA": busca["sprint_nativa"]
+                    "SPRINT_NATIVA": busca["sprint_nativa"],
+                    "DEV_INICIAL": extrair_dev_inicial(issue["fields"])
                 })
 
             if data_json.get("isLast") or not data_json.get("issues", []): break
@@ -321,14 +344,17 @@ def extrair_e_salvar_backlog(projeto, sprint_id):
     if dados_backlog:
         try:
             with conn.session as s:
+                # Filtra por PROJETO também: sem isso, ao chamar essa função duas vezes
+                # (uma por STAR, outra por ELFA) a segunda chamada apaga o resultado da primeira,
+                # pois o DELETE limpava a sprint inteira em vez de só os itens daquele projeto.
                 s.execute(text("DELETE FROM TB_SPRINT_BACKLOG WHERE ID_SPRINT = :id AND PROJETO = :projeto"), {"id": sprint_id, "projeto": projeto})
                 s.commit()
             
             query = text("""
                 INSERT INTO TB_SPRINT_BACKLOG 
-                (ID_SPRINT, ISSUE_KEY, PROJETO, RESPONSAVEL, PAPEL, TIPO_ITEM, RESUMO, CLIENTE, DATA_CRIACAO, STATUS, SISTEMA, DATA_LIMITE, PONTOS, SPRINT_NATIVA)
+                (ID_SPRINT, ISSUE_KEY, PROJETO, RESPONSAVEL, PAPEL, TIPO_ITEM, RESUMO, CLIENTE, DATA_CRIACAO, STATUS, SISTEMA, DATA_LIMITE, PONTOS, SPRINT_NATIVA, DEV_INICIAL)
                 VALUES 
-                (:ID_SPRINT, :ISSUE_KEY, :PROJETO, :RESPONSAVEL, :PAPEL, :TIPO_ITEM, :RESUMO, :CLIENTE, :DATA_CRIACAO, :STATUS, :SISTEMA, :DATA_LIMITE, :PONTOS, :SPRINT_NATIVA)
+                (:ID_SPRINT, :ISSUE_KEY, :PROJETO, :RESPONSAVEL, :PAPEL, :TIPO_ITEM, :RESUMO, :CLIENTE, :DATA_CRIACAO, :STATUS, :SISTEMA, :DATA_LIMITE, :PONTOS, :SPRINT_NATIVA, :DEV_INICIAL)
             """)
             with conn.session as s:
                 s.execute(query, dados_backlog)
@@ -360,18 +386,19 @@ def sincronizar_com_banco(dados_extracao, projeto_nome, sprint_id):
             "STATUS": item.get("Status", "Desconhecido"),
             "SISTEMA": item["Sistema"],
             "DATA_LIMITE": item.get("data_limite"),
-            "DATA_CRIACAO": item.get("data_criacao") 
+            "DATA_CRIACAO": item.get("data_criacao"),
+            "DEV_INICIAL": item.get("Dev_Inicial")  # None -> fica NULL/branco se o campo não vier preenchido no Jira
         })
     
     try:
         query = text("""
             INSERT INTO TB_SPRINT_DETAILS 
-            (ISSUE_KEY, PROJETO, RESPONSAVEL, TIPO_ITEM, CATEGORIA, PONTOS, DATA_CONCLUSAO, ID_SPRINT, RESUMO, CLIENTE, STATUS, SISTEMA, DATA_LIMITE, DATA_CRIACAO)
+            (ISSUE_KEY, PROJETO, RESPONSAVEL, TIPO_ITEM, CATEGORIA, PONTOS, DATA_CONCLUSAO, ID_SPRINT, RESUMO, CLIENTE, STATUS, SISTEMA, DATA_LIMITE, DATA_CRIACAO, DEV_INICIAL)
             VALUES 
-            (:ISSUE_KEY, :PROJETO, :RESPONSAVEL, :TIPO_ITEM, :CATEGORIA, :PONTOS, :DATA_CONCLUSAO, :ID_SPRINT, :RESUMO, :CLIENTE, :STATUS, :SISTEMA, :DATA_LIMITE, :DATA_CRIACAO)
+            (:ISSUE_KEY, :PROJETO, :RESPONSAVEL, :TIPO_ITEM, :CATEGORIA, :PONTOS, :DATA_CONCLUSAO, :ID_SPRINT, :RESUMO, :CLIENTE, :STATUS, :SISTEMA, :DATA_LIMITE, :DATA_CRIACAO, :DEV_INICIAL)
             ON DUPLICATE KEY UPDATE 
             RESPONSAVEL = VALUES(RESPONSAVEL), TIPO_ITEM = VALUES(TIPO_ITEM), CATEGORIA = VALUES(CATEGORIA), 
-            PONTOS = VALUES(PONTOS), DATA_CONCLUSAO = VALUES(DATA_CONCLUSAO), CLIENTE = VALUES(CLIENTE), RESUMO = VALUES(RESUMO), STATUS = VALUES(STATUS), SISTEMA = VALUES(SISTEMA), DATA_LIMITE = VALUES(DATA_LIMITE), DATA_CRIACAO = VALUES(DATA_CRIACAO)
+            PONTOS = VALUES(PONTOS), DATA_CONCLUSAO = VALUES(DATA_CONCLUSAO), CLIENTE = VALUES(CLIENTE), RESUMO = VALUES(RESUMO), STATUS = VALUES(STATUS), SISTEMA = VALUES(SISTEMA), DATA_LIMITE = VALUES(DATA_LIMITE), DATA_CRIACAO = VALUES(DATA_CRIACAO), DEV_INICIAL = VALUES(DEV_INICIAL)
         """)
         with conn.session as s:
             s.execute(query, payload)

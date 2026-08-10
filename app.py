@@ -42,7 +42,7 @@ def carregar_issues():
                RESPONSAVEL as responsavel, TIPO_ITEM as tipo_item, CATEGORIA as categoria, 
                PONTOS as pontos, DATA_CONCLUSAO as data_conclusao, ID_SPRINT as sprint_id, 
                CLIENTE as cliente, RESUMO as resumo, STATUS as status, SISTEMA as sistema,
-               DATA_LIMITE as data_limite, DATA_CRIACAO as data_criacao
+               DATA_LIMITE as data_limite, DATA_CRIACAO as data_criacao, DEV_INICIAL as dev_inicial
         FROM TB_SPRINT_DETAILS
     """
     return conn.query(query)
@@ -81,7 +81,8 @@ def carregar_backlog():
                PROJETO as projeto, RESPONSAVEL as responsavel, PAPEL as papel, 
                TIPO_ITEM as tipo_item, CLIENTE as cliente, RESUMO as resumo, 
                DATA_CRIACAO as data_criacao, STATUS as status, SISTEMA as sistema,
-               DATA_LIMITE as data_limite, PONTOS as pontos, SPRINT_NATIVA as sprint_nativa
+               DATA_LIMITE as data_limite, PONTOS as pontos, SPRINT_NATIVA as sprint_nativa,
+               DEV_INICIAL as dev_inicial
         FROM TB_SPRINT_BACKLOG
     """
     return conn.query(query)
@@ -471,7 +472,7 @@ with aba_dashboard:
             with st.container(border=True):
                
                 c_tit, c_lbl = st.columns([3, 1])
-                c_tit.markdown("#### 📌 Marcadores Principais (Pendentes de desenvolvimento)")
+                c_tit.markdown("#### Marcadores Principais")
                 
                 row_sprint_atual = df_sprints[df_sprints['id'] == id_sprint_selecionada].iloc[0]
                 dt_ult = row_sprint_atual.get('ultima_atualizacao')
@@ -689,13 +690,14 @@ with aba_dashboard:
                             if not df_detalhe.empty:
                                 df_detalhe['link'] = "https://ddsinfo.atlassian.net/browse/" + df_detalhe['issue_key']
                                 st.dataframe(
-                                    df_detalhe[['issue_key','resumo',  'responsavel', 'tipo_item', 'link']], 
+                                    df_detalhe[['issue_key','resumo',  'responsavel', 'status','tipo_item', 'link']], 
                                     hide_index=True,
                                     use_container_width=True,
                                     column_config={
                                         "issue_key": "Chave",
                                         "resumo" : "Resumo",
                                         "responsavel": "Gestor",
+                                        "status": "Status",
                                         "tipo_item": "Tipo",
                                         "link": st.column_config.LinkColumn("Jira")
                                     }
@@ -748,7 +750,7 @@ with aba_dashboard:
                             if not df_detalhe.empty:
                                 df_detalhe['link'] = "https://ddsinfo.atlassian.net/browse/" + df_detalhe['issue_key']
                                 st.dataframe(
-                                    df_detalhe[['issue_key','resumo' , 'responsavel', 'tipo_item', 'cliente','link']], 
+                                    df_detalhe[['issue_key','resumo' , 'responsavel', 'tipo_item', 'status','cliente','link']], 
                                     hide_index=True,
                                     use_container_width=True,
                                     column_config={
@@ -756,6 +758,7 @@ with aba_dashboard:
                                         "resumo" : "Resumo",
                                         "responsavel": "Analista",
                                         "tipo_item": "Tipo",
+                                        "status": "Status",
                                         "cliente": "Cliente",
                                         "link": st.column_config.LinkColumn("Jira")
                                     }
@@ -791,106 +794,144 @@ with aba_dashboard:
 
                 if not df_sprint_desenvolvimento.empty:
                     nomes_devs = ["Felipe", "Kauan", "Gustavo", "Luiz", "Isaías", "Isaias", "Nei", "Guilherme", "João", "Eder"]
-                    
+                    nomes_devs_regex = '|'.join(nomes_devs)
+
                     df_devs_backlog = df_sprint_desenvolvimento[
-                        (df_sprint_desenvolvimento['responsavel'].str.contains('|'.join(nomes_devs), case=False, na=False)) &
+                        (df_sprint_desenvolvimento['responsavel'].str.contains(nomes_devs_regex, case=False, na=False)) &
                         (df_sprint_desenvolvimento['responsavel'].notna()) & 
                         (df_sprint_desenvolvimento['responsavel'].str.strip() != "") &
                         (~df_sprint_desenvolvimento['status'].isin(status_alvo))
                     ].copy()
-                    
-                    if not df_devs_backlog.empty:
-                        devs_agrupado = df_devs_backlog.groupby('responsavel').agg(
-                            Quantidade=('issue_key', 'count'),
-                            Pontos=('pontos_calc', 'sum')
-                        ).reset_index()
-                        
-                        devs_agrupado.rename(columns={'responsavel': 'Responsável'}, inplace=True)
-                        
-                        total_devs = devs_agrupado['Quantidade'].sum()
-                        total_pontos = devs_agrupado['Pontos'].sum()
-                        
+
+                    # "Finalizados" = itens que já entraram em status alvo -> mesma base usada em
+                    # "✅ Entregas da Sprint" (TB_SPRINT_DETAILS / df_filtrado), pra bater os números.
+                    df_devs_finalizados = df_filtrado[
+                        (df_filtrado['responsavel'].str.contains(nomes_devs_regex, case=False, na=False)) &
+                        (df_filtrado['responsavel'].notna()) &
+                        (df_filtrado['responsavel'].str.strip() != "")
+                    ].copy() if not df_filtrado.empty else pd.DataFrame()
+
+                    if not df_devs_finalizados.empty:
+                        df_devs_finalizados['pontos_calc'] = pd.to_numeric(
+                            df_devs_finalizados['pontos'].astype(str).str.replace(',', '.', regex=False).str.replace(r'[^\d\.]', '', regex=True),
+                            errors='coerce'
+                        ).fillna(0.0)
+
+                    devs_agrupado_pend = (
+                        df_devs_backlog.groupby('responsavel').agg(Quantidade=('issue_key', 'count'), Pontos=('pontos_calc', 'sum')).reset_index()
+                        if not df_devs_backlog.empty else pd.DataFrame(columns=['responsavel', 'Quantidade', 'Pontos'])
+                    ).rename(columns={'responsavel': 'Responsável'})
+
+                    devs_agrupado_fin = (
+                        df_devs_finalizados.groupby('responsavel').agg(Quantidade=('issue_key', 'count'), Pontos=('pontos_calc', 'sum')).reset_index()
+                        if not df_devs_finalizados.empty else pd.DataFrame(columns=['responsavel', 'Quantidade', 'Pontos'])
+                    ).rename(columns={'responsavel': 'Responsável'})
+
+                    if not devs_agrupado_pend.empty or not devs_agrupado_fin.empty:
+                        radio_equipe_dev = st.radio(
+                            "Visualizar:", ["Pendentes", "Finalizados"],
+                            horizontal=True, key="radio_equipe_dev_view"
+                        )
+
+                        if radio_equipe_dev == "Pendentes":
+                            devs_agrupado, devs_agrupado_ghost = devs_agrupado_pend.copy(), devs_agrupado_fin.copy()
+                            rotulo_view, rotulo_ghost = "Pendentes", "Entregue"
+                        else:
+                            devs_agrupado, devs_agrupado_ghost = devs_agrupado_fin.copy(), devs_agrupado_pend.copy()
+                            rotulo_view, rotulo_ghost = "Finalizados", "Pendente"
+
+                        total_devs = devs_agrupado['Quantidade'].sum() if not devs_agrupado.empty else 0
+                        total_pontos = devs_agrupado['Pontos'].sum() if not devs_agrupado.empty else 0.0
+
                         col_t1, col_t2 = st.columns(2)
-                        col_t1.metric("Total de Itens (Pendentes)", total_devs)
-                        col_t2.metric("Total de Pontos (Pendentes)", f"{total_pontos:.1f}")
+                        col_t1.metric(f"Total de Itens ({rotulo_view})", int(total_devs))
+                        col_t2.metric(f"Total de Pontos ({rotulo_view})", f"{total_pontos:.1f}")
                         st.divider()
-                        
-                        devs_agrupado_cards = devs_agrupado.sort_values(by='Quantidade', ascending=False)
-                        num_devs = len(devs_agrupado_cards)
-                        cols_devs = st.columns(min(num_devs, 6) if num_devs > 0 else 1) 
-                        
-                        for i, row in devs_agrupado_cards.iterrows():
-                            nome_completo = str(row['Responsável'])
-                            
-                                
-                            cols_devs[i % len(cols_devs)].metric(
-                                label=nome_completo, 
-                                value=f"{row['Quantidade']}",
-                                delta=f"{row['Pontos']:.1f} pts"
-                            )
-                            
+
+                        if not devs_agrupado.empty:
+                            devs_agrupado_cards = devs_agrupado.sort_values(by='Quantidade', ascending=False).reset_index(drop=True)
+                            num_devs = len(devs_agrupado_cards)
+                            cols_devs = st.columns(min(num_devs, 6) if num_devs > 0 else 1)
+
+                            for i, row in devs_agrupado_cards.iterrows():
+                                cols_devs[i % len(cols_devs)].metric(
+                                    label=str(row['Responsável']),
+                                    value=f"{row['Quantidade']}",
+                                    delta=f"{row['Pontos']:.1f} pts"
+                                )
+
+                            st.markdown("<br>", unsafe_allow_html=True)
+
+                            df_combo = devs_agrupado.merge(
+                                devs_agrupado_ghost, on='Responsável', how='left', suffixes=('', '_ghost')
+                            ).fillna(0)
+                            ordem_devs = devs_agrupado_cards['Responsável'].tolist()
+
+                            col_graf1, col_graf2 = st.columns(2)
+                            altura_grafico = max(250, num_devs * 35)
+
+                            with col_graf1:
+                                st.markdown(f"###### Itens {rotulo_view.lower()} por Devs")
+                                ghost_itens = alt.Chart(df_combo).mark_bar(color="white", opacity=0.18, cornerRadiusEnd=3).encode(
+                                    x=alt.X('Quantidade_ghost:Q', title='Itens'),
+                                    y=alt.Y('Responsável:N', sort=ordem_devs, title=''),
+                                    tooltip=[alt.Tooltip('Quantidade_ghost:Q', title=f'Itens ({rotulo_ghost})')]
+                                )
+                                bar_itens = alt.Chart(df_combo).mark_bar(color="#4CA6FF", cornerRadiusEnd=3).encode(
+                                    x=alt.X('Quantidade:Q', title='Itens', axis=alt.Axis(grid=False)),
+                                    y=alt.Y('Responsável:N', sort=ordem_devs, title=''),
+                                    tooltip=['Responsável', alt.Tooltip('Quantidade:Q', title=f'Itens ({rotulo_view})'), alt.Tooltip('Pontos:Q', format='.1f')]
+                                )
+                                label_itens = bar_itens.mark_text(align='left', baseline='middle', dx=3, color='white').encode(text='Quantidade:Q')
+                                st.altair_chart((ghost_itens + bar_itens + label_itens).properties(height=altura_grafico), use_container_width=True, theme="streamlit")
+
+                            with col_graf2:
+                                st.markdown(f"###### Pontos {rotulo_view.lower()} por Devs")
+                                ghost_pontos = alt.Chart(df_combo).mark_bar(color="white", opacity=0.18, cornerRadiusEnd=3).encode(
+                                    x=alt.X('Pontos_ghost:Q', title='Pontos'),
+                                    y=alt.Y('Responsável:N', sort=ordem_devs, title=''),
+                                    tooltip=[alt.Tooltip('Pontos_ghost:Q', title=f'Pontos ({rotulo_ghost})', format='.1f')]
+                                )
+                                bar_pontos = alt.Chart(df_combo).mark_bar(color="#FF9F43", cornerRadiusEnd=3).encode(
+                                    x=alt.X('Pontos:Q', title='Pontos', axis=alt.Axis(grid=False)),
+                                    y=alt.Y('Responsável:N', sort=ordem_devs, title=''),
+                                    tooltip=['Responsável', alt.Tooltip('Quantidade:Q', title=f'Itens ({rotulo_view})'), alt.Tooltip('Pontos:Q', format='.1f')]
+                                )
+                                label_pontos = bar_pontos.mark_text(align='left', baseline='middle', dx=3, color='white').encode(text=alt.Text('Pontos:Q', format='.1f'))
+                                st.altair_chart((ghost_pontos + bar_pontos + label_pontos).properties(height=altura_grafico), use_container_width=True, theme="streamlit")
+
+                            st.caption(f"Barra sólida = {rotulo_view.lower()}. Silhueta clara = {rotulo_ghost.lower()} (referência).")
+                        else:
+                            st.info(f"Nenhum item {rotulo_view.lower()} encontrado para a equipe.")
+
                         st.markdown("<br>", unsafe_allow_html=True)
-                        
-                        col_graf1, col_graf2 = st.columns(2)
-                        altura_grafico = max(250, num_devs * 35)
-
-                        with col_graf1:
-                            st.markdown("###### Itens restantes por Devs")
-                            bar_itens = alt.Chart(devs_agrupado).mark_bar(color="#4CA6FF", cornerRadiusEnd=3).encode(
-                                x=alt.X('Quantidade:Q', title='Itens Pendentes', axis=alt.Axis(grid=False)),
-                                y=alt.Y('Responsável:N', sort='-x', title=''), 
-                                tooltip=['Responsável', 'Quantidade', alt.Tooltip('Pontos:Q', format='.1f')] 
-                            )
-                            label_itens = bar_itens.mark_text(align='left', baseline='middle', dx=3, color='white').encode(text='Quantidade:Q')
-                            st.altair_chart((bar_itens + label_itens).properties(height=altura_grafico), use_container_width=True, theme="streamlit")
-
-                        with col_graf2:
-                            st.markdown("###### Pontos restantes por Devs")
-                            bar_pontos = alt.Chart(devs_agrupado).mark_bar(color="#FF9F43", cornerRadiusEnd=3).encode(
-                                x=alt.X('Pontos:Q', title='Pontos Pendentes', axis=alt.Axis(grid=False)),
-                                y=alt.Y('Responsável:N', sort='-x', title=''), 
-                                tooltip=['Responsável', 'Quantidade', alt.Tooltip('Pontos:Q', format='.1f')] 
-                            )
-                            label_pontos = bar_pontos.mark_text(align='left', baseline='middle', dx=3, color='white').encode(
-                                text=alt.Text('Pontos:Q', format='.1f')
-                            )
-                            st.altair_chart((bar_pontos + label_pontos).properties(height=altura_grafico), use_container_width=True, theme="streamlit")
-
                         
 
                         with st.expander("Detalhes de itens da Equipe de Desenvolvimento"):
-                            dev_selecionado = st.selectbox(
-                                "Filtrar tarefas de:", 
-                                ["Todos da Equipe"] + devs_agrupado['Responsável'].tolist(),
-                                label_visibility="collapsed"
+                            df_resumo_devs = devs_agrupado_pend.merge(
+                                devs_agrupado_fin, on='Responsável', how='outer', suffixes=('_pend', '_fin')
+                            ).fillna(0)
+                            df_resumo_devs = df_resumo_devs.rename(columns={
+                                'Quantidade_pend': 'Pendente (Itens)',
+                                'Quantidade_fin': 'Entregue (Itens)',
+                                'Pontos_pend': 'Pendente (Pts)',
+                                'Pontos_fin': 'Entregue (Pts)'
+                            })
+                            df_resumo_devs['Pendente (Itens)'] = df_resumo_devs['Pendente (Itens)'].astype(int)
+                            df_resumo_devs['Entregue (Itens)'] = df_resumo_devs['Entregue (Itens)'].astype(int)
+                            df_resumo_devs = df_resumo_devs.sort_values(by='Pendente (Itens)', ascending=False)
+    
+                            st.dataframe(
+                                df_resumo_devs[['Responsável', 'Pendente (Itens)', 'Entregue (Itens)' , 'Pendente (Pts)', 'Entregue (Pts)']],
+                                hide_index=True,
+                                use_container_width=True,
+                                column_config={
+                                    'Pendente (Pts)': st.column_config.NumberColumn(format="%.1f"),
+                                    'Entregue (Pts)': st.column_config.NumberColumn(format="%.1f"),
+                                }
                             )
-                            
-                            if dev_selecionado == "Todos da Equipe":
-                                df_detalhe_dev = df_devs_backlog.copy()
-                            else:
-                                df_detalhe_dev = df_devs_backlog[df_devs_backlog['responsavel'] == dev_selecionado].copy()
-                                
-                            if not df_detalhe_dev.empty:
-                                df_detalhe_dev['link'] = "https://ddsinfo.atlassian.net/browse/" + df_detalhe_dev['issue_key']
-                                st.dataframe(
-                                    df_detalhe_dev[['issue_key', 'resumo', 'responsavel', 'tipo_item', 'pontos_calc', 'cliente', 'status', 'link']], 
-                                    hide_index=True,
-                                    use_container_width=True,
-                                    column_config={
-                                        "issue_key": "Chave",
-                                        "resumo": st.column_config.TextColumn("Resumo", width="large"),
-                                        "responsavel": "Desenvolvedor",
-                                        "tipo_item": "Tipo",
-                                        "pontos_calc": st.column_config.NumberColumn("Pts", format="%.1f"),
-                                        "cliente": "Cliente",
-                                        "status": "Status",
-                                        "link": st.column_config.LinkColumn("Jira")
-                                    }
-                                )
-                    else:
-                        st.info("Nenhuma tarefa pendente de desenvolvimento para a equipe no momento.")
-                else:
-                    st.info("Backlog vazio ou sem dados para análise.")  
+                           
+                
 
 
         st.divider()
@@ -1300,13 +1341,20 @@ with aba_dashboard:
         st.divider()
 
 
+        # Antes fazia uma query nova por linha, com f-string interpolada direto no SQL
+        # (mesmo padrão de injeção que corrigimos antes) e sem usar o campo certo.
+        # Agora usa o "Dev Inicial" (campo do Jira, já carregado em df_issues/df_backlog)
+        # em vez do RESPONSAVEL atual, e não bate mais no banco pra cada linha.
+        _mapa_dev_inicial = {}
+        for _df_origem in (df_issues, df_backlog):
+            if _df_origem is not None and not _df_origem.empty and 'dev_inicial' in _df_origem.columns:
+                for _key, _dev in zip(_df_origem['issue_key'], _df_origem['dev_inicial']):
+                    if pd.notnull(_dev) and str(_dev).strip():
+                        _mapa_dev_inicial[_key] = str(_dev).strip()
+
         def buscar_autor_original(issue_key):
-            try:
-                query = f"SELECT RESPONSAVEL FROM TB_SPRINT_DETAILS WHERE ISSUE_KEY = '{issue_key}' LIMIT 1"
-                resultado = conn.query(query)
-                if not resultado.empty: return resultado.iloc[0]['RESPONSAVEL']
-            except: pass
-            return "Não rastreado"
+            # Campo vazio no Jira (ou item pai não sincronizado) -> fica em branco, não "Não rastreado".
+            return _mapa_dev_inicial.get(issue_key, "")
 
         def extrair_pai_prioritario(resumo):
             todos_codigos = re.findall(r'([A-Za-z]+-\d+)', str(resumo))
@@ -1366,12 +1414,24 @@ with aba_dashboard:
             with st.expander(" Detalhamento de Raiz"):
                 df_rns['item_origem'] = df_rns['resumo'].apply(extrair_pai_prioritario)
                 df_rns['autor_original'] = df_rns['item_origem'].apply(buscar_autor_original)
+
+                # Bug do hiperlink: "issue_key" e "item_origem" guardavam só o código (ex: "STAR-123"),
+                # não uma URL. O LinkColumn trata o próprio valor da célula como o link, então o clique
+                # não ia pra lugar nenhum válido. Agora monta a URL de verdade (mesmo padrão usado no
+                # resto do dashboard) e usa display_text só pra mostrar o código como texto do link.
+                df_rns['issue_key_url'] = "https://ddsinfo.atlassian.net/browse/" + df_rns['issue_key']
+                df_rns['item_origem_url'] = df_rns['item_origem'].apply(
+                    lambda cod: f"https://ddsinfo.atlassian.net/browse/{cod}" if cod not in ("Sem Pai", None, "") else None
+                )
+
                 st.dataframe(
-                    df_rns[['issue_key', 'item_origem', 'autor_original', 'responsavel', 'resumo']],
+                    df_rns[['issue_key_url', 'item_origem_url', 'autor_original', 'responsavel', 'resumo']],
                     use_container_width=True, hide_index=True,
                     column_config={
-                        "issue_key": st.column_config.LinkColumn("Ticket RN", display_text="https://ddsinfo.atlassian.net/browse/(.*)"),
-                        "item_origem": st.column_config.LinkColumn("Pai", display_text=r"https://ddsinfo.atlassian.net/browse/(.*)"),
+                        "issue_key_url": st.column_config.LinkColumn("Ticket RN", display_text=r"https://ddsinfo\.atlassian\.net/browse/(.*)"),
+                        "item_origem_url": st.column_config.LinkColumn("Pai", display_text=r"https://ddsinfo\.atlassian\.net/browse/(.*)"),
+                        "autor_original": "Dev Inicial (item pai)",
+                        "responsavel": "Responsável (RN)",
                         "resumo": st.column_config.TextColumn("Resumo", width="large")
                     }
                 )
