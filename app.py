@@ -862,45 +862,100 @@ with aba_dashboard:
 
                             st.markdown("<br>", unsafe_allow_html=True)
 
+                            # outer: dev que só tem itens na outra visão (ex.: entregou tudo e não tem
+                            # nada pendente) precisa aparecer no gráfico, senão a barra "total" mente.
                             df_combo = devs_agrupado.merge(
-                                devs_agrupado_ghost, on='Responsável', how='left', suffixes=('', '_ghost')
+                                devs_agrupado_ghost, on='Responsável', how='outer', suffixes=('', '_ghost')
                             ).fillna(0)
-                            ordem_devs = devs_agrupado_cards['Responsável'].tolist()
+
+                            # Total analisado do dev = o que está na visão atual + o que está na outra.
+                            # A barra sólida vai de 0 até a visão atual; a silhueta se estende até o total.
+                            df_combo['Total_Itens'] = df_combo['Quantidade'] + df_combo['Quantidade_ghost']
+                            df_combo['Total_Pontos'] = df_combo['Pontos'] + df_combo['Pontos_ghost']
+
+                            # Rótulo do total só aparece quando há sobra de silhueta, senão colide
+                            # com o rótulo da barra sólida (que fica na mesma posição).
+                            df_combo['Rotulo_Total_Itens'] = [
+                                f"{t:.0f}" if t > q else "" for t, q in zip(df_combo['Total_Itens'], df_combo['Quantidade'])
+                            ]
+                            df_combo['Rotulo_Total_Pontos'] = [
+                                f"{t:.1f}" if t > p else "" for t, p in zip(df_combo['Total_Pontos'], df_combo['Pontos'])
+                            ]
+
+                            ordem_devs = (
+                                df_combo.sort_values(by=['Quantidade', 'Total_Itens'], ascending=False)['Responsável'].tolist()
+                            )
 
                             col_graf1, col_graf2 = st.columns(2)
                             altura_grafico = max(250, num_devs * 35)
 
                             with col_graf1:
                                 st.markdown(f"###### Itens {rotulo_view.lower()} por Devs")
-                                ghost_itens = alt.Chart(df_combo).mark_bar(color="white", opacity=0.18, cornerRadiusEnd=3).encode(
-                                    x=alt.X('Quantidade_ghost:Q', title='Itens'),
+                                ghost_itens = alt.Chart(df_combo).mark_bar(
+                                    fill="#4CA6FF", fillOpacity=0.15,
+                                    stroke="#4CA6FF", strokeOpacity=0.55, strokeWidth=1,
+                                    cornerRadiusEnd=3
+                                ).encode(
+                                    x=alt.X('Total_Itens:Q', title='Itens'),
                                     y=alt.Y('Responsável:N', sort=ordem_devs, title=''),
-                                    tooltip=[alt.Tooltip('Quantidade_ghost:Q', title=f'Itens ({rotulo_ghost})')]
+                                    tooltip=[
+                                        'Responsável',
+                                        alt.Tooltip('Total_Itens:Q', title='Itens (Total)', format='.0f'),
+                                        alt.Tooltip('Quantidade:Q', title=f'Itens ({rotulo_view})', format='.0f'),
+                                        alt.Tooltip('Quantidade_ghost:Q', title=f'Itens ({rotulo_ghost})', format='.0f')
+                                    ]
                                 )
+                                label_total_itens = ghost_itens.mark_text(
+                                    align='left', baseline='middle', dx=3, color='#9AA5B1'
+                                ).encode(text=alt.Text('Rotulo_Total_Itens:N'))
                                 bar_itens = alt.Chart(df_combo).mark_bar(color="#4CA6FF", cornerRadiusEnd=3).encode(
                                     x=alt.X('Quantidade:Q', title='Itens', axis=alt.Axis(grid=False)),
                                     y=alt.Y('Responsável:N', sort=ordem_devs, title=''),
                                     tooltip=['Responsável', alt.Tooltip('Quantidade:Q', title=f'Itens ({rotulo_view})'), alt.Tooltip('Pontos:Q', format='.1f')]
                                 )
-                                label_itens = bar_itens.mark_text(align='left', baseline='middle', dx=3, color='white').encode(text='Quantidade:Q')
-                                st.altair_chart((ghost_itens + bar_itens + label_itens).properties(height=altura_grafico), use_container_width=True, theme="streamlit")
+                                # outer merge pode transformar a contagem em float -> formata pra não virar "19.0"
+                                label_itens = bar_itens.mark_text(align='left', baseline='middle', dx=3, color='white').encode(
+                                    text=alt.Text('Quantidade:Q', format='.0f')
+                                )
+                                st.altair_chart(
+                                    (ghost_itens + bar_itens + label_itens + label_total_itens).properties(height=altura_grafico),
+                                    use_container_width=True, theme="streamlit"
+                                )
 
                             with col_graf2:
                                 st.markdown(f"###### Pontos {rotulo_view.lower()} por Devs")
-                                ghost_pontos = alt.Chart(df_combo).mark_bar(color="white", opacity=0.18, cornerRadiusEnd=3).encode(
-                                    x=alt.X('Pontos_ghost:Q', title='Pontos'),
+                                ghost_pontos = alt.Chart(df_combo).mark_bar(
+                                    fill="#FF9F43", fillOpacity=0.15,
+                                    stroke="#FF9F43", strokeOpacity=0.55, strokeWidth=1,
+                                    cornerRadiusEnd=3
+                                ).encode(
+                                    x=alt.X('Total_Pontos:Q', title='Pontos'),
                                     y=alt.Y('Responsável:N', sort=ordem_devs, title=''),
-                                    tooltip=[alt.Tooltip('Pontos_ghost:Q', title=f'Pontos ({rotulo_ghost})', format='.1f')]
+                                    tooltip=[
+                                        'Responsável',
+                                        alt.Tooltip('Total_Pontos:Q', title='Pontos (Total)', format='.1f'),
+                                        alt.Tooltip('Pontos:Q', title=f'Pontos ({rotulo_view})', format='.1f'),
+                                        alt.Tooltip('Pontos_ghost:Q', title=f'Pontos ({rotulo_ghost})', format='.1f')
+                                    ]
                                 )
+                                label_total_pontos = ghost_pontos.mark_text(
+                                    align='left', baseline='middle', dx=3, color='#9AA5B1'
+                                ).encode(text=alt.Text('Rotulo_Total_Pontos:N'))
                                 bar_pontos = alt.Chart(df_combo).mark_bar(color="#FF9F43", cornerRadiusEnd=3).encode(
                                     x=alt.X('Pontos:Q', title='Pontos', axis=alt.Axis(grid=False)),
                                     y=alt.Y('Responsável:N', sort=ordem_devs, title=''),
                                     tooltip=['Responsável', alt.Tooltip('Quantidade:Q', title=f'Itens ({rotulo_view})'), alt.Tooltip('Pontos:Q', format='.1f')]
                                 )
                                 label_pontos = bar_pontos.mark_text(align='left', baseline='middle', dx=3, color='white').encode(text=alt.Text('Pontos:Q', format='.1f'))
-                                st.altair_chart((ghost_pontos + bar_pontos + label_pontos).properties(height=altura_grafico), use_container_width=True, theme="streamlit")
+                                st.altair_chart(
+                                    (ghost_pontos + bar_pontos + label_pontos + label_total_pontos).properties(height=altura_grafico),
+                                    use_container_width=True, theme="streamlit"
+                                )
 
-                            st.caption(f"Barra sólida = {rotulo_view.lower()}. Silhueta clara = {rotulo_ghost.lower()} (referência).")
+                            st.caption(
+                                f"Barra sólida = {rotulo_view.lower()}. A silhueta se estende até o **total analisado** "
+                                f"do dev na sprint ({rotulo_view.lower()} + {rotulo_ghost.lower()})."
+                            )
                         else:
                             st.info(f"Nenhum item {rotulo_view.lower()} encontrado para a equipe.")
 
@@ -1030,6 +1085,12 @@ with aba_dashboard:
             show_media_entrega = st.checkbox("Média de Entrega Diária", value=True)
         with col3:
             show_media_sprint = st.checkbox("Média por Sprint", value=True)
+
+        col4, col5, col6 = st.columns(3)
+        with col4:
+            show_incluidos_diario = st.checkbox("Exibir Incluídos Diários", value=False)
+        with col5:
+            show_concluidos_diario = st.checkbox("Exibir Concluídos Diários", value=False)
 
         if not df_backlog_filtrado.empty or not df_filtrado.empty:
             id_sprint = int(df_sprints[df_sprints['nome_exibicao'] == sprint_selecionada]['id'].iloc[0])
@@ -1222,21 +1283,39 @@ with aba_dashboard:
             # (ex.: dias em que a extração falhava por causa do bug do ANALISTAS). Agora deixamos None
             # (lacuna no gráfico) até o primeiro dado real conhecido.
             ultimo_valor_conhecido = None
-            total_concluidos_acumulado = 0 
+            # "Itens Incluídos" (escopo aumentando) só pode ser calculado ENTRE DOIS PONTOS COM SNAPSHOT
+            # REAL (não entre carry-forwards) -- senão todo dia sem sincronização apareceria como se
+            # tivesse ganhado escopo igual ao que foi concluído naquele dia, o que é falso.
+            ultimo_valor_real = None
+            total_concluidos_acumulado = 0
 
             for i, dia in enumerate(dias_sprint):
                 ideal_restante = tickets_iniciais - (passo_ideal * i)
+                tem_novo_dado = (dia == hoje) or (dia in dict_real_diario)
                 if dia == hoje: ultimo_valor_conhecido = total_atual_pendentes
                 elif dia in dict_real_diario: ultimo_valor_conhecido = dict_real_diario[dia]
                 concluidos_hoje = dict_concluidos_diario.get(dia, 0)
                 if dia <= hoje: total_concluidos_acumulado += concluidos_hoje
+
+                # itens_incluidos = quanto o "Trabalho Restante" mudou entre dois pontos reais,
+                # somado de volta o que foi concluído no meio -> reconstrói quanto escopo novo entrou.
+                # Ex.: restante ficou igual mesmo com 5 concluídos -> 5 itens novos entraram no lugar.
+                itens_incluidos_dia = None
+                if dia <= hoje and tem_novo_dado:
+                    if ultimo_valor_real is not None:
+                        delta_bruto = (ultimo_valor_conhecido - ultimo_valor_real) + concluidos_hoje
+                        itens_incluidos_dia = max(0, round(delta_bruto))
+                    ultimo_valor_real = ultimo_valor_conhecido
+
                 bd_dados.append({
                     "Data": dia.strftime("%d/%m"),
                     "Diretriz": round(ideal_restante, 1),
                     "Trabalho Restante": ultimo_valor_conhecido if dia <= hoje else None,
                     "Concluídos Acumulados": total_concluidos_acumulado if dia <= hoje else None,
                     "Média Entrega Diária": round(media_entrega_por_dia[i], 1) if i < len(media_entrega_por_dia) and media_entrega_por_dia[i] is not None else None,
-                    "Média por Sprint": media_restante_por_dia[i] if i < len(media_restante_por_dia) and media_restante_por_dia[i] is not None else None
+                    "Média por Sprint": media_restante_por_dia[i] if i < len(media_restante_por_dia) and media_restante_por_dia[i] is not None else None,
+                    "Itens Incluídos (Diário)": itens_incluidos_dia if dia <= hoje else None,
+                    "Itens Concluídos (Diário)": concluidos_hoje if dia <= hoje else None
                 })
 
             df_burndown = pd.DataFrame(bd_dados)
@@ -1255,6 +1334,10 @@ with aba_dashboard:
                 legenda_itens.append('<div><b style="color: #FF9F43;">- - -</b> Média Entrega Diária</div>')
             if show_media_sprint:
                 legenda_itens.append('<div><b style="color: #8E44AD;">- - -</b> Média por Sprint</div>')
+            if show_incluidos_diario:
+                legenda_itens.append('<div><b style="color: #9B59B6;">▮</b> Itens Incluídos (Diário) — eixo direito</div>')
+            if show_concluidos_diario:
+                legenda_itens.append('<div><b style="color: #82E0AA;">▮</b> Itens Concluídos (Diário) — eixo direito</div>')
 
             st.markdown(
                 '<div style="display:flex;flex-wrap:wrap;justify-content:center;gap:20px;font-size:14px;margin-bottom:15px;">'
@@ -1263,8 +1346,31 @@ with aba_dashboard:
                 unsafe_allow_html=True
             )
 
-            eixo_x = alt.X('Data:O', sort=None, title="Dias da Sprint")
+            # O domínio do eixo X precisa ser FIXO e explícito. Com sort=None cada camada declarava a
+            # ordem do seu próprio recorte (cada uma com dropna diferente) e o Vega unia os domínios
+            # camada a camada -> os dias saíam embaralhados (11/08, 13/08, 14/08, 17/08, 10/08...).
+            ordem_datas = df_burndown['Data'].tolist()
+            eixo_x = alt.X(
+                'Data:O', sort=ordem_datas, title="Dias da Sprint",
+                scale=alt.Scale(domain=ordem_datas)
+            )
             eixo_y = alt.Y('Valor:Q', title="Quantidade de Itens")
+            # Eixo secundário (direita), só pras barras DIÁRIAS: o volume diário (poucos itens/dia)
+            # ficaria imperceptível na mesma escala do acumulado (que passa de 140+). O "Incluídos
+            # (Acumulado)" fica no eixo primário porque é comparável em ordem de grandeza ao restante/diretriz.
+            # Teto folgado no eixo direito: sem isso a maior barra do dia encosta no topo do gráfico
+            # e as linhas (que são a informação principal do burndown) ficam soterradas. Com ~2.4x
+            # o pico diário as barras ocupam no máximo ~40% da altura e viram pano de fundo.
+            _max_diario = pd.concat([
+                pd.to_numeric(df_burndown['Itens Incluídos (Diário)'], errors='coerce'),
+                pd.to_numeric(df_burndown['Itens Concluídos (Diário)'], errors='coerce'),
+            ]).max()
+            _teto_direita = max(1.0, float(_max_diario) * 2.4) if pd.notna(_max_diario) else 1.0
+            eixo_y_direita = alt.Y(
+                'Valor:Q', title="Itens no Dia",
+                scale=alt.Scale(domain=[0, _teto_direita], nice=False),
+                axis=alt.Axis(orient='right', grid=False)
+            )
 
             def _make_serie(df_base, coluna, cor, stroke_dash, point, stroke_width):
                 df_serie = (
@@ -1297,6 +1403,51 @@ with aba_dashboard:
                     )
                 )
 
+            def _make_bars_diarias(df_base, series):
+                """Barras diárias agrupadas (lado a lado) + rótulo com a quantidade do dia.
+
+                Sobrepostas na mesma posição X, incluídos e concluídos se mascaravam (a cor da
+                frente virava uma mistura e não dava pra ler nenhum dos dois). xOffset separa as
+                barras dentro do mesmo dia; o rótulo dispensa a leitura pelo eixo.
+                """
+                frames = []
+                for coluna, cor in series:
+                    d = df_base[['Data', coluna]].rename(columns={coluna: 'Valor'}).copy()
+                    d['Valor'] = pd.to_numeric(d['Valor'], errors='coerce')
+                    d = d.dropna(subset=['Valor'])
+                    if d.empty:
+                        continue
+                    d['Série'] = coluna
+                    frames.append(d)
+                if not frames:
+                    return None
+
+                df_bars = pd.concat(frames, ignore_index=True)
+                dominio = [coluna for coluna, _ in series]
+                faixa = [cor for _, cor in series]
+                escala_cor = alt.Color(
+                    'Série:N', scale=alt.Scale(domain=dominio, range=faixa), legend=None
+                )
+                offset = alt.XOffset('Série:N', scale=alt.Scale(domain=dominio))
+
+                base = alt.Chart(df_bars).encode(
+                    x=eixo_x,
+                    y=eixo_y_direita,
+                    xOffset=offset,
+                    tooltip=[
+                        alt.Tooltip('Data:O', title='Data'),
+                        alt.Tooltip('Série:N', title='Série'),
+                        alt.Tooltip('Valor:Q', title='Qtd no dia', format='.0f'),
+                    ]
+                )
+                barras = base.mark_bar(opacity=0.55)
+                # Dia com 0 não ganha rótulo, senão a faixa do eixo vira uma fileira de zeros.
+                rotulos = base.transform_filter(alt.datum.Valor > 0).mark_text(
+                    dy=-6, fontSize=11, fontWeight='bold'
+                ).encode(text=alt.Text('Valor:Q', format='.0f'), color=escala_cor)
+
+                return alt.layer(barras.encode(color=escala_cor), rotulos)
+
             camadas = []
 
             for coluna, cor, dash, pt, sw in [
@@ -1316,8 +1467,27 @@ with aba_dashboard:
                 c = _make_serie(df_burndown, 'Média por Sprint', '#8E44AD', [4, 2], False, 3)
                 if c is not None: camadas.append(c)
 
-            if camadas:
-                grafico_burndown = alt.layer(*camadas).resolve_scale(y='shared').properties(height=420)
+            # Barras diárias (eixo secundário/direita) — uma única camada agrupada, resolvida
+            # com escala Y independente.
+            series_diarias = []
+            if show_incluidos_diario:
+                series_diarias.append(('Itens Incluídos (Diário)', '#9B59B6'))
+            if show_concluidos_diario:
+                series_diarias.append(('Itens Concluídos (Diário)', '#82E0AA'))
+
+            grafico_secundario = _make_bars_diarias(df_burndown, series_diarias) if series_diarias else None
+
+            if camadas or grafico_secundario is not None:
+                grafico_primario = alt.layer(*camadas).resolve_scale(y='shared') if camadas else None
+                if grafico_secundario is not None:
+                    # Barras diárias primeiro (ficam atrás), linhas por cima -> resolve_scale independente
+                    # é o que cria o eixo Y da direita de verdade.
+                    if grafico_primario is not None:
+                        grafico_burndown = alt.layer(grafico_secundario, grafico_primario).resolve_scale(y='independent').properties(height=420)
+                    else:
+                        grafico_burndown = grafico_secundario.properties(height=420)
+                else:
+                    grafico_burndown = grafico_primario.properties(height=420)
                 st.altair_chart(grafico_burndown, use_container_width=True, theme="streamlit")
             else:
                 st.info("Sem dados suficientes para renderizar o gráfico de Burndown.")
@@ -1375,18 +1545,42 @@ with aba_dashboard:
         df_rns = pd.DataFrame()
         df_concluidos = pd.DataFrame()
 
+        # Janela da sprint: o vínculo por sprint_id sozinho traz RN arrastado de sprints anteriores
+        # (item que continua no board). Aqui só interessa o RN *gerado* dentro do intervalo da sprint.
+        _linha_sprint_rn = df_sprints[df_sprints['nome_exibicao'] == sprint_selecionada]
+        rn_dt_ini = rn_dt_fim = None
+        if not _linha_sprint_rn.empty:
+            _ini = _linha_sprint_rn['data_inicio'].iloc[0]
+            _fim = _linha_sprint_rn['data_fim'].iloc[0]
+            rn_dt_ini = pd.to_datetime(_ini, errors='coerce')
+            rn_dt_fim = pd.to_datetime(_fim, errors='coerce')
+            if pd.isna(rn_dt_ini) or pd.isna(rn_dt_fim):
+                rn_dt_ini = rn_dt_fim = None
+
+        def _filtrar_criados_na_sprint(df):
+            # Sem coluna de criação ou sem datas da sprint -> devolve como está, em vez de zerar o painel.
+            if df.empty or 'data_criacao' not in df.columns or rn_dt_ini is None:
+                return df
+            criacao = pd.to_datetime(df['data_criacao'], errors='coerce')
+            # data_criacao ausente/inválida não é descartada silenciosamente: some do recorte só se
+            # houver data válida fora da janela.
+            dentro = criacao.isna() | ((criacao >= rn_dt_ini) & (criacao <= rn_dt_fim))
+            return df[dentro].copy()
+
         if not df_todas_issues.empty:
             df_todas_issues['tipo_norm'] = df_todas_issues['tipo_item'].astype(str).str.lower().str.strip()
             df_rns = df_todas_issues[df_todas_issues['tipo_norm'].str.contains('retorno negativo', na=False)].copy()
-            
+            df_rns = _filtrar_criados_na_sprint(df_rns)
+
             df_concluidos = df_issues_all[df_issues_all['status'] == '6.0 Concluído']
-            
+
             c1, c2, c3 = st.columns(3)
             c1.metric("RNs Gerados", len(df_rns))
             c2.metric("Itens Concluídos", len(df_concluidos))
             taxa = (len(df_rns) / len(df_concluidos) * 100) if len(df_concluidos) > 0 else 0
             c3.metric("Densidade de Falha", f"{taxa:.1f}%")
 
+            
         if not df_rns.empty:
             st.write("---")
             col_left, col_right = st.columns(2)
@@ -1544,7 +1738,7 @@ with aba_dashboard:
                 df_critico['link'] = "https://ddsinfo.atlassian.net/browse/" + df_critico['issue_key']
                 
                 st.dataframe(
-                    df_critico[['Alerta', 'link', 'cliente', 'resumo', 'responsavel','status', 'Prazo']],
+                    df_critico[['Alerta', 'link', 'cliente', 'resumo', 'responsavel', 'Prazo']],
                     use_container_width=True, hide_index=True,
                     column_config={
                         "Alerta": st.column_config.TextColumn("Status", width="small"),
@@ -1557,7 +1751,6 @@ with aba_dashboard:
                         "cliente": "Cliente",
                         "resumo": "Tarefa",
                         "responsavel": "Responsável",
-                        "status": "Status Atual",
                         "Prazo": st.column_config.TextColumn("Data Limite", width="small")
                     }
                 )
