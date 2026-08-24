@@ -830,7 +830,7 @@ with aba_dashboard:
                     if not devs_agrupado_pend.empty or not devs_agrupado_fin.empty:
                         radio_equipe_dev = st.radio(
                             "Visualizar:", ["Pendentes", "Finalizados"],
-                            horizontal=True, key="radio_equipe_dev_view"
+                            horizontal=True, key="radio_equipe_dev_view", index=1
                         )
 
                         if radio_equipe_dev == "Pendentes":
@@ -846,6 +846,57 @@ with aba_dashboard:
                         col_t1, col_t2 = st.columns(2)
                         col_t1.metric(f"Total de Itens ({rotulo_view})", int(total_devs))
                         col_t2.metric(f"Total de Pontos ({rotulo_view})", f"{total_pontos:.1f}")
+
+                        # ---- Marcador global da equipe: finalizado x solicitado ----
+                        # Os cards por dev respondem "quem está com o quê". Este bloco responde
+                        # "quanto do total pedido à equipe já saiu", que é a leitura de gestão.
+                        eq_itens_fin = float(devs_agrupado_fin['Quantidade'].sum()) if not devs_agrupado_fin.empty else 0.0
+                        eq_itens_pend = float(devs_agrupado_pend['Quantidade'].sum()) if not devs_agrupado_pend.empty else 0.0
+                        eq_itens_total = eq_itens_fin + eq_itens_pend
+
+                        def _barra_consolidada(feito, total, cor, casas=0):
+                            """Barra única equipe: sólido = finalizado, silhueta = total solicitado."""
+                            fmt = f".{casas}f"
+                            pct = (feito / total * 100) if total > 0 else 0.0
+                            df_eq = pd.DataFrame({
+                                'Equipe': ['Equipe'],
+                                'Finalizado': [feito],
+                                'Solicitado': [total],
+                                'Rotulo': [f"{feito:.{casas}f} de {total:.{casas}f}  ({pct:.1f}%)"],
+                            })
+                            eixo_y_eq = alt.Y('Equipe:N', title='', axis=None)
+                            ghost = alt.Chart(df_eq).mark_bar(
+                                fill=cor, fillOpacity=0.15, stroke=cor, strokeOpacity=0.55,
+                                strokeWidth=1, cornerRadiusEnd=3, height=34
+                            ).encode(
+                                x=alt.X('Solicitado:Q', title='', axis=alt.Axis(grid=False)),
+                                y=eixo_y_eq,
+                                tooltip=[
+                                    alt.Tooltip('Solicitado:Q', title='Solicitado', format=fmt),
+                                    alt.Tooltip('Finalizado:Q', title='Finalizado', format=fmt),
+                                ]
+                            )
+                            solido = alt.Chart(df_eq).mark_bar(
+                                color=cor, cornerRadiusEnd=3, height=34
+                            ).encode(
+                                x=alt.X('Finalizado:Q', title='', axis=alt.Axis(grid=False)),
+                                y=eixo_y_eq,
+                                tooltip=[alt.Tooltip('Finalizado:Q', title='Finalizado', format=fmt)]
+                            )
+                            # Rótulo ancorado no zero (align left): encostado na ponta da barra ele
+                            # sairia do gráfico quando o percentual fosse alto.
+                            texto = alt.Chart(df_eq).mark_text(
+                                align='left', baseline='middle', dx=6, color='white', fontWeight='bold'
+                            ).encode(x=alt.value(0), y=eixo_y_eq, text=alt.Text('Rotulo:N'))
+                            return (ghost + solido + texto).properties(height=60)
+
+                        with st.container(border=True):
+                            st.markdown("**Consolidado da Equipe**")
+                            st.altair_chart(
+                                _barra_consolidada(eq_itens_fin, eq_itens_total, '#4CA6FF', casas=0),
+                                use_container_width=True, theme="streamlit"
+                            )
+
                         st.divider()
 
                         if not devs_agrupado.empty:
@@ -1055,10 +1106,130 @@ with aba_dashboard:
                             "cliente": "Cliente",
                             "resumo": st.column_config.TextColumn("Resumo", width="large"),
                             "status": "Status",
-                            "tipo_item": "Tipo", "categoria": "Categoria", "pontos": "Pontos", 
+                            "tipo_item": "Tipo", "categoria": "Categoria", "pontos": "Pontos",
                             "link": st.column_config.LinkColumn("Jira")
                         }
                     )
+
+            # ========================================================
+            # RITMO DA EQUIPE: PONTOS POR DEV x ESPERADO
+            # ========================================================
+            # A escala do time fecha 13 pontos em 5 dias (1 semana útil). Esse é o ritmo esperado
+            # de UM dev por semana -- e a referência contra a qual a média real é medida.
+            PONTOS_POR_SEMANA_DEV = 13
+            DIAS_UTEIS_SEMANA = 5
+            # Tamanho fixo da equipe de desenvolvimento. É o denominador da média por dev e não
+            # sai dos dados de propósito: quem entregou 0 ponto não aparece em df_filtrado
+            # (férias, alocação em outro projeto, dev novo), e usar só quem entregou inflaria a
+            # média justamente nas sprints com gente parada.
+            QTD_DEVS_EQUIPE = 8
+
+            with st.expander("Ritmo da equipe", expanded=False):
+                _linha_sprint_ritmo = df_sprints[df_sprints['nome_exibicao'] == sprint_selecionada]
+                _ini_ritmo = pd.to_datetime(_linha_sprint_ritmo['data_inicio'].iloc[0], errors='coerce') if not _linha_sprint_ritmo.empty else pd.NaT
+                _fim_ritmo = pd.to_datetime(_linha_sprint_ritmo['data_fim'].iloc[0], errors='coerce') if not _linha_sprint_ritmo.empty else pd.NaT
+
+                if pd.isna(_ini_ritmo) or pd.isna(_fim_ritmo):
+                    st.info("Sprint sem datas cadastradas.")
+                else:
+                    hoje_ritmo = pd.Timestamp(datetime.now().date())
+                    # Dias ÚTEIS (bdate_range = seg-sex). Contar dia corrido inflaria o esperado
+                    # em ~40%, já que fim de semana não produz entrega.
+                    _fim_decorrido = min(hoje_ritmo, _fim_ritmo)
+                    dias_uteis_totais = len(pd.bdate_range(_ini_ritmo, _fim_ritmo))
+                    dias_uteis_decorridos = len(pd.bdate_range(_ini_ritmo, _fim_decorrido)) if _fim_decorrido >= _ini_ritmo else 0
+
+                    df_ritmo = df_filtrado.copy()
+                    df_ritmo['pontos'] = pd.to_numeric(df_ritmo['pontos'], errors='coerce').fillna(0.0)
+
+                    qtd_devs_ativos = QTD_DEVS_EQUIPE
+
+                    pontos_realizados = float(df_ritmo['pontos'].sum())
+                    media_real_por_dev = pontos_realizados / qtd_devs_ativos
+
+                    # Esperado proporcional aos dias úteis JÁ DECORRIDOS -- comparar o parcial da
+                    # sprint contra a meta cheia acusaria atraso todo dia até o último.
+                    esperado_por_dev = PONTOS_POR_SEMANA_DEV * (dias_uteis_decorridos / DIAS_UTEIS_SEMANA)
+                    esperado_por_dev_total = PONTOS_POR_SEMANA_DEV * (dias_uteis_totais / DIAS_UTEIS_SEMANA)
+                    esperado_equipe_total = esperado_por_dev_total * qtd_devs_ativos
+
+                    desvio_por_dev = media_real_por_dev - esperado_por_dev
+                    pct_atingido = (media_real_por_dev / esperado_por_dev * 100) if esperado_por_dev > 0 else 0.0
+
+                    r1, r2, r3, r4 = st.columns(4)
+                    r1.metric("Pontos Entregues", f"{pontos_realizados:.1f}")
+                    r2.metric("Média por Dev", f"{media_real_por_dev:.1f} pts")
+                    r3.metric("Esperado por Dev", f"{esperado_por_dev:.1f} pts")
+                    r4.metric("Ritmo", f"{pct_atingido:.0f}%", delta=f"{desvio_por_dev:+.1f} pts/dev")
+
+                    r5, r6, r7 = st.columns(3)
+                    r5.metric("Dias Úteis", f"{dias_uteis_decorridos} de {dias_uteis_totais}")
+                    r6.metric("Meta da Sprint", f"{esperado_por_dev_total:.1f} pts/dev")
+                    r7.metric("Meta da Equipe", f"{esperado_equipe_total:.1f} pts")
+
+                    st.divider()
+
+                    # ---- Por dev: quem está puxando o ritmo para cima/baixo ----
+                    st.write("**Pontos por Desenvolvedor**")
+                    df_por_dev = (
+                        df_ritmo[df_ritmo['pontos'] > 0]
+                        .groupby('responsavel')
+                        .agg(Itens=('issue_key', 'count'), Pontos=('pontos', 'sum'))
+                        .reset_index()
+                        .rename(columns={'responsavel': 'Responsável'})
+                    )
+
+                    if df_por_dev.empty:
+                        st.info("Nenhum ponto entregue nesta sprint.")
+                    else:
+                        df_por_dev['Esperado'] = esperado_por_dev
+                        df_por_dev['Desvio'] = df_por_dev['Pontos'] - esperado_por_dev
+                        df_por_dev['% do Esperado'] = (
+                            (df_por_dev['Pontos'] / esperado_por_dev * 100) if esperado_por_dev > 0 else 0.0
+                        )
+                        df_por_dev = df_por_dev.sort_values(by='Pontos', ascending=False)
+
+                        col_rt1, col_rt2 = st.columns([3, 2])
+
+                        with col_rt1:
+                            st.dataframe(
+                                df_por_dev[['Responsável', 'Itens', 'Pontos', 'Esperado', 'Desvio', '% do Esperado']],
+                                hide_index=True, use_container_width=True,
+                                column_config={
+                                    'Pontos': st.column_config.NumberColumn(format="%.1f"),
+                                    'Esperado': st.column_config.NumberColumn("Esperado (até hoje)", format="%.1f"),
+                                    'Desvio': st.column_config.NumberColumn(format="%+.1f"),
+                                    '% do Esperado': st.column_config.NumberColumn(format="%.0f%%"),
+                                }
+                            )
+
+                        with col_rt2:
+                            altura_ritmo = max(220, len(df_por_dev) * 30)
+                            barras_ritmo = alt.Chart(df_por_dev).mark_bar(color='#4CA6FF').encode(
+                                x=alt.X('Pontos:Q', title='Pontos entregues', axis=alt.Axis(grid=False)),
+                                y=alt.Y('Responsável:N', sort='-x', title=''),
+                                tooltip=[
+                                    'Responsável',
+                                    alt.Tooltip('Itens:Q'),
+                                    alt.Tooltip('Pontos:Q', format='.1f'),
+                                    alt.Tooltip('Desvio:Q', title='Desvio vs. esperado', format='+.1f'),
+                                ]
+                            )
+                            rotulos_ritmo = barras_ritmo.mark_text(
+                                align='left', baseline='middle', dx=4, color='white'
+                            ).encode(text=alt.Text('Pontos:Q', format='.1f'))
+                            # Régua no esperado: é ela que transforma a barra em diagnóstico
+                            # ("passou ou não da meta") em vez de só um ranking.
+                            regua_esperado = alt.Chart(
+                                pd.DataFrame({'esperado': [esperado_por_dev]})
+                            ).mark_rule(color='#FF9F43', strokeDash=[4, 4], strokeWidth=2).encode(
+                                x=alt.X('esperado:Q'),
+                                tooltip=[alt.Tooltip('esperado:Q', title='Esperado por dev', format='.1f')]
+                            )
+                            st.altair_chart(
+                                (barras_ritmo + rotulos_ritmo + regua_esperado).properties(height=altura_ritmo),
+                                use_container_width=True, theme="streamlit"
+                            )
         else:
             st.info("Nenhuma entrega contabilizada.")
 
@@ -1335,9 +1506,9 @@ with aba_dashboard:
             if show_media_sprint:
                 legenda_itens.append('<div><b style="color: #8E44AD;">- - -</b> Média por Sprint</div>')
             if show_incluidos_diario:
-                legenda_itens.append('<div><b style="color: #9B59B6;">▮</b> Itens Incluídos (Diário) — eixo direito</div>')
+                legenda_itens.append('<div><b style="color: #9B59B6;">▮</b> Itens Incluídos (Diário)</div>')
             if show_concluidos_diario:
-                legenda_itens.append('<div><b style="color: #82E0AA;">▮</b> Itens Concluídos (Diário) — eixo direito</div>')
+                legenda_itens.append('<div><b style="color: #82E0AA;">▮</b> Itens Concluídos (Diário)</div>')
 
             st.markdown(
                 '<div style="display:flex;flex-wrap:wrap;justify-content:center;gap:20px;font-size:14px;margin-bottom:15px;">'
@@ -1507,6 +1678,101 @@ with aba_dashboard:
                         column_config={"Data da Entrega": "Data de Conclusão", "issue_key": "Chave", "resumo": st.column_config.TextColumn("Resumo", width="large"), "responsavel": "Dev", "pontos": st.column_config.NumberColumn("Pontos", format="%d"), "link": st.column_config.LinkColumn("Jira")}
                     )
                 else: st.info(f"Nenhum item de {visao_burndown} foi concluído nesta sprint ainda.")
+
+            # ========================================================
+            # CHEGADA DE ITENS POR DIA (por que a curva não desce)
+            # ========================================================
+            # As barras "Incluídos Diários" dizem QUANTO entrou, mas são derivadas do delta do
+            # Trabalho Restante -- não sabem QUAIS itens entraram. Aqui a leitura é direta:
+            # agrupa pelo campo data_criacao dos itens que estão no escopo da sprint.
+            with st.expander("Chegada de itens por dia", expanded=False):
+                _partes_escopo = [
+                    d for d in (df_backlog_ativo, df_filtrado_ativo)
+                    if d is not None and not d.empty and 'data_criacao' in d.columns
+                ]
+
+                if not _partes_escopo:
+                    st.info("Sem data de criação registrada nos itens desta visão.")
+                else:
+                    df_chegada = pd.concat(_partes_escopo, ignore_index=True)
+                    # Item pode aparecer nas duas metades (pendente e entregue) em recargas
+                    # parciais; sem isso o mesmo ticket contaria duas vezes no dia.
+                    if 'issue_key' in df_chegada.columns:
+                        df_chegada = df_chegada.drop_duplicates(subset=['issue_key'])
+
+                    df_chegada['_criacao'] = pd.to_datetime(df_chegada['data_criacao'], errors='coerce')
+                    df_chegada = df_chegada.dropna(subset=['_criacao'])
+                    df_chegada['_criacao'] = df_chegada['_criacao'].dt.date
+
+                    _ini_ch, _fim_ch = data_ini, data_fim
+                    dentro_janela = (df_chegada['_criacao'] >= _ini_ch) & (df_chegada['_criacao'] <= _fim_ch)
+                    df_novos = df_chegada[dentro_janela].copy()
+                    qtd_herdados = int((~dentro_janela).sum())
+
+                    if df_novos.empty:
+                        st.info(
+                            f"Nenhum item criado dentro da sprint nesta visão. "
+                            f"Os {qtd_herdados} itens do escopo são anteriores ao início."
+                        )
+                    else:
+                        df_por_dia = (
+                            df_novos.groupby('_criacao')
+                            .agg(Itens=('issue_key', 'count'))
+                            .reset_index()
+                            .rename(columns={'_criacao': 'Data'})
+                            .sort_values('Data')
+                        )
+                        df_por_dia['Dia'] = pd.to_datetime(df_por_dia['Data']).dt.strftime('%d/%m')
+                        pico = df_por_dia.loc[df_por_dia['Itens'].idxmax()]
+                        media_dia = df_por_dia['Itens'].mean()
+
+                        k1, k2, k3, k4 = st.columns(4)
+                        k1.metric("Itens Criados na Sprint", int(df_por_dia['Itens'].sum()))
+                        k2.metric("Dia de Maior Entrada", f"{pico['Dia']}", delta=f"{int(pico['Itens'])} itens")
+                        k3.metric("Média por Dia de Entrada", f"{media_dia:.1f}")
+                        k4.metric("Herdados (criados antes)", qtd_herdados)
+
+                        st.divider()
+
+                        st.write("**Quais itens chegaram**")
+                        # Opções ordenadas do dia que mais recebeu para o que menos recebeu, com a
+                        # contagem no rótulo -- é o que restou do ranking depois de tirar a tabela.
+                        df_rank_dias = df_por_dia.sort_values('Itens', ascending=False)
+                        opcoes_dias = ["Todos os dias"] + [
+                            f"{d} ({int(q)} itens)" for d, q in zip(df_rank_dias['Dia'], df_rank_dias['Itens'])
+                        ]
+                        dia_escolhido = st.selectbox(
+                            "Dia de criação:", opcoes_dias, key="select_dia_chegada"
+                        )
+
+                        df_detalhe_ch = df_novos.copy()
+                        df_detalhe_ch['Dia'] = pd.to_datetime(df_detalhe_ch['_criacao']).dt.strftime('%d/%m')
+                        if dia_escolhido != "Todos os dias":
+                            df_detalhe_ch = df_detalhe_ch[df_detalhe_ch['Dia'] == dia_escolhido.split(' (')[0]]
+
+                        for _col_opc in ('cliente', 'tipo_item', 'status', 'responsavel', 'pontos'):
+                            if _col_opc not in df_detalhe_ch.columns:
+                                df_detalhe_ch[_col_opc] = ""
+
+                        df_detalhe_ch['link'] = "https://ddsinfo.atlassian.net/browse/" + df_detalhe_ch['issue_key'].astype(str)
+                        df_detalhe_ch = df_detalhe_ch.sort_values(['_criacao', 'issue_key'])
+
+                        st.dataframe(
+                            df_detalhe_ch[['Dia', 'issue_key', 'resumo', 'cliente', 'tipo_item', 'status', 'responsavel', 'pontos', 'link']],
+                            use_container_width=True, hide_index=True,
+                            column_config={
+                                'Dia': st.column_config.TextColumn('Criado em', width='small'),
+                                'issue_key': 'Chave',
+                                'resumo': st.column_config.TextColumn('Resumo', width='large'),
+                                'cliente': 'Cliente',
+                                'tipo_item': 'Tipo',
+                                'status': 'Status',
+                                'responsavel': 'Responsável',
+                                'pontos': st.column_config.NumberColumn('Pontos', format="%.1f"),
+                                'link': st.column_config.LinkColumn('Jira'),
+                            }
+                        )
+
         else: st.info("Sem dados suficientes para gerar o Burndown.")
         st.divider()
 
@@ -1583,52 +1849,113 @@ with aba_dashboard:
             
         if not df_rns.empty:
             st.write("---")
+
+            # ---- Resolução do "Dev Inicial" (a primeira coisa a validar) ----
+            # Fonte de verdade: campo "Desenvolvedor original" do Jira (customfield_10594),
+            # que a extração grava em dev_inicial. Ele vem no PRÓPRIO RN -- a versão anterior
+            # só olhava o dev_inicial do item PAI extraído por regex do resumo, e o pai quase
+            # nunca existe na base (é um RC-*, projeto que não é sincronizado), então a coluna
+            # aparecia vazia em 100% das linhas mesmo quando o RN tinha o campo preenchido.
+            SEM_DEV = "Não informado"
+
+            def _limpar(valor):
+                if valor is None or (isinstance(valor, float) and pd.isna(valor)):
+                    return ""
+                texto = str(valor).strip()
+                return "" if texto.lower() in ("none", "nan", "") else texto
+
+            if 'dev_inicial' in df_rns.columns:
+                df_rns['dev_inicial_rn'] = df_rns['dev_inicial'].apply(_limpar)
+            else:
+                df_rns['dev_inicial_rn'] = ""
+
+            df_rns['item_origem'] = df_rns['resumo'].apply(extrair_pai_prioritario)
+            df_rns['dev_inicial_pai'] = df_rns['item_origem'].apply(buscar_autor_original).apply(_limpar)
+
+            # Cadeia de resolução, do mais confiável para o menos: campo do próprio RN, depois
+            # o do item citado no resumo. Alimenta o agrupamento por "Dev Inicial" do gráfico.
+            df_rns['dev_inicial_final'] = [
+                do_rn or do_pai or SEM_DEV
+                for do_rn, do_pai in zip(df_rns['dev_inicial_rn'], df_rns['dev_inicial_pai'])
+            ]
+
             col_left, col_right = st.columns(2)
 
             with col_left:
-                st.write("**RNs por Desenvolvedor**")
-                df_rank = df_rns.groupby('responsavel').size().reset_index(name='Qtd_RNs')
-                df_rank = df_rank.sort_values(by='Qtd_RNs', ascending=False)
-                bar_chart = alt.Chart(df_rank).mark_bar().encode(
-                    x=alt.X('Qtd_RNs:Q', title='Qtd de RNs', axis=alt.Axis(tickMinStep=1)),
-                    y=alt.Y('responsavel:N', sort='-x', title=''),
-                    color=alt.value("#3CD6E7"),
-                    tooltip=['responsavel', 'Qtd_RNs']
-                ).properties(height=200)
-                st.altair_chart(bar_chart, use_container_width=True)
+                base_ranking = st.radio(
+                    "Agrupar RNs por:",
+                    ["Dev Inicial (quem originou)", "Responsável atual (quem trata)"],
+                    key="radio_base_rn", horizontal=False
+                )
+                col_ranking = 'dev_inicial_final' if base_ranking.startswith("Dev Inicial") else 'responsavel'
+
+                df_rank = (
+                    df_rns.groupby(col_ranking).size().reset_index(name='Qtd_RNs')
+                    .rename(columns={col_ranking: 'Dev'})
+                    .sort_values(by='Qtd_RNs', ascending=False)
+                )
+                altura_rank = max(200, len(df_rank) * 32)
+                barras_rn = alt.Chart(df_rank).mark_bar().encode(
+                    x=alt.X('Qtd_RNs:Q', title='Qtd de RNs', axis=alt.Axis(tickMinStep=1, grid=False)),
+                    y=alt.Y('Dev:N', sort='-x', title=''),
+                    # "Não informado" em cinza: é ausência de dado, não um dev com muitos RNs.
+                    color=alt.condition(
+                        alt.datum.Dev == SEM_DEV, alt.value("#7F8C8D"), alt.value("#3CD6E7")
+                    ),
+                    tooltip=[alt.Tooltip('Dev:N', title='Dev'), alt.Tooltip('Qtd_RNs:Q', title='RNs')]
+                )
+                rotulos_rn = barras_rn.mark_text(
+                    align='left', baseline='middle', dx=4, color='white'
+                ).encode(text=alt.Text('Qtd_RNs:Q', format='.0f'))
+                st.altair_chart(
+                    (barras_rn + rotulos_rn).properties(height=altura_rank),
+                    use_container_width=True, theme="streamlit"
+                )
 
             with col_right:
                 st.write("**Status dos RNs**")
                 df_status = df_rns.groupby('status').size().reset_index(name='Qtd')
                 donut = alt.Chart(df_status).mark_arc(innerRadius=50).encode(
-                    theta="Qtd:Q", color="status:N"
-                ).properties(height=200)
+                    theta="Qtd:Q",
+                    color=alt.Color("status:N", title="Status"),
+                    tooltip=[alt.Tooltip('status:N', title='Status'), alt.Tooltip('Qtd:Q', title='RNs')]
+                ).properties(height=240)
                 st.altair_chart(donut, use_container_width=True)
 
-            with st.expander(" Detalhamento de Raiz"):
-                df_rns['item_origem'] = df_rns['resumo'].apply(extrair_pai_prioritario)
-                df_rns['autor_original'] = df_rns['item_origem'].apply(buscar_autor_original)
+            with st.expander("Detalhamento de Raiz", expanded=False):
+                df_det = df_rns.copy()
 
-                # Bug do hiperlink: "issue_key" e "item_origem" guardavam só o código (ex: "STAR-123"),
-                # não uma URL. O LinkColumn trata o próprio valor da célula como o link, então o clique
-                # não ia pra lugar nenhum válido. Agora monta a URL de verdade (mesmo padrão usado no
-                # resto do dashboard) e usa display_text só pra mostrar o código como texto do link.
-                df_rns['issue_key_url'] = "https://ddsinfo.atlassian.net/browse/" + df_rns['issue_key']
-                df_rns['item_origem_url'] = df_rns['item_origem'].apply(
-                    lambda cod: f"https://ddsinfo.atlassian.net/browse/{cod}" if cod not in ("Sem Pai", None, "") else None
-                )
+                if df_det.empty:
+                    st.info("Nenhum RN nesta sprint.")
+                else:
+                    # Colunas opcionais: nem todo recorte (details x backlog) traz as mesmas.
+                    for _c in ('cliente', 'status', 'data_criacao'):
+                        if _c not in df_det.columns:
+                            df_det[_c] = ""
 
-                st.dataframe(
-                    df_rns[['issue_key_url', 'item_origem_url', 'autor_original', 'responsavel', 'resumo']],
-                    use_container_width=True, hide_index=True,
-                    column_config={
-                        "issue_key_url": st.column_config.LinkColumn("Ticket RN", display_text=r"https://ddsinfo\.atlassian\.net/browse/(.*)"),
-                        "item_origem_url": st.column_config.LinkColumn("Pai", display_text=r"https://ddsinfo\.atlassian\.net/browse/(.*)"),
-                        "autor_original": "Dev Inicial (item pai)",
-                        "responsavel": "Responsável (RN)",
-                        "resumo": st.column_config.TextColumn("Resumo", width="large")
-                    }
-                )
+                    # data_criacao chega com tipos misturados (datetime.date vindo do banco e str
+                    # nas linhas sem valor), e sort_values compara os dois direto -> TypeError.
+                    # Converter primeiro e ordenar pela coluna convertida resolve os dois casos:
+                    # o que não parseia vira NaT e vai para o fim, em vez de derrubar a página.
+                    df_det['_criacao_dt'] = pd.to_datetime(df_det['data_criacao'], errors='coerce')
+                    df_det['Criado em'] = df_det['_criacao_dt'].dt.strftime('%d/%m/%Y').fillna("—")
+                    df_det['issue_key_url'] = "https://ddsinfo.atlassian.net/browse/" + df_det['issue_key'].astype(str)
+                    df_det = df_det.sort_values('_criacao_dt', ascending=False, na_position='last')
+
+                    st.dataframe(
+                        df_det[['issue_key_url', 'Criado em', 'responsavel', 'status', 'cliente', 'resumo']],
+                        use_container_width=True, hide_index=True,
+                        column_config={
+                            "issue_key_url": st.column_config.LinkColumn(
+                                "Ticket RN", display_text=r"https://ddsinfo\.atlassian\.net/browse/(.*)", width="small"
+                            ),
+                            "Criado em": st.column_config.TextColumn("Criado em", width="small"),
+                            "responsavel": "Responsável",
+                            "status": "Status",
+                            "cliente": "Cliente",
+                            "resumo": st.column_config.TextColumn("Resumo", width="large"),
+                        }
+                    )
         else:
             st.success("Nenhum RN na sprint atual. Fluxo limpo!")
         st.divider()
@@ -1641,9 +1968,16 @@ with aba_dashboard:
                 df_backlog_filtrado['data_criacao'] = "2000-01-01"
 
             data_inicio_sprint = df_sprints[df_sprints['nome_exibicao'] == sprint_selecionada]['data_inicio'].iloc[0]
-            
-            data_ini_str_comp = data_inicio_sprint.strftime("%Y-%m-%d") if not isinstance(data_inicio_sprint, str) else data_inicio_sprint
-            df_clientes_sprint = df_backlog_filtrado[df_backlog_filtrado['data_criacao'] >= data_ini_str_comp].copy()
+
+            # Comparava data_criacao (que vem como datetime.date do banco em parte das linhas e
+            # como str em outras) direto contra uma string -> TypeError assim que caísse uma date.
+            # Converter os dois lados torna a comparação independente do tipo que o driver devolveu.
+            _ini_clientes = pd.to_datetime(data_inicio_sprint, errors='coerce')
+            _criacao_clientes = pd.to_datetime(df_backlog_filtrado['data_criacao'], errors='coerce')
+            if pd.isna(_ini_clientes):
+                df_clientes_sprint = df_backlog_filtrado.copy()
+            else:
+                df_clientes_sprint = df_backlog_filtrado[_criacao_clientes >= _ini_clientes].copy()
 
             col_cli1, col_cli2 = st.columns([2, 3])
 
