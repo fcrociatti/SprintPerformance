@@ -1,7 +1,7 @@
 import streamlit as st
 import requests
 from requests.auth import HTTPBasicAuth
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import pandas as pd
 from sqlalchemy import text 
 
@@ -32,6 +32,19 @@ headers = {"Accept": "application/json", "Content-Type": "application/json"}
 auth = HTTPBasicAuth(JIRA_USER, JIRA_TOKEN)
 
 periodos = []
+
+# Fuso da equipe (Brasília, sem horário de verão desde 2019). Os limites da sprint
+# eram montados em UTC: a sprint terminava às 20:59 do último dia e começava às
+# 21:00 da véspera, então issues movidas à noite caíam na sprint errada ou em
+# nenhuma (ex.: STAR-7827 e STAR-9014, movidas em 20/09 após as 22h).
+FUSO_EQUIPE = timezone(timedelta(hours=-3))
+
+
+def periodo_sprint(data_inicio, data_fim):
+    """Início e fim da sprint como datetimes com fuso, do 00:00 ao 23:59:59 de Brasília."""
+    inicio = datetime.combine(data_inicio, datetime.min.time()).replace(tzinfo=FUSO_EQUIPE)
+    fim = datetime.combine(data_fim, datetime.max.time()).replace(tzinfo=FUSO_EQUIPE)
+    return inicio, fim
 
 def extrair_cliente(issue_fields):
     cliente_raw = issue_fields.get(CUSTOM_CLIENTE_FIELD)
@@ -453,8 +466,7 @@ def executar_extracao(data_inicio_input, data_fim_input, descricao_input, fase_s
     
     global periodos
     
-    inicio = datetime.combine(data_inicio_input, datetime.min.time()).replace(tzinfo=timezone.utc)
-    fim = datetime.combine(data_fim_input, datetime.max.time()).replace(tzinfo=timezone.utc)
+    inicio, fim = periodo_sprint(data_inicio_input, data_fim_input)
     periodos = [(inicio, fim)]
     
     conn.reset()
