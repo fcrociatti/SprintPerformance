@@ -6,6 +6,7 @@ from somaCopia import executar_extracao
 from somaCopia import limpar_snapshot_sprint 
 import os
 import re
+import math
 
 st.set_page_config(page_title="Sprint Performance - DDS", layout="wide")
 
@@ -14,7 +15,7 @@ conn = st.connection("banco_dds", type="sql")
 col_titulo, col_logo = st.columns([5, 1])
 
 with col_titulo:
-    st.title("📊 Sprint Performance - DDS")
+    st.title("Sprint Performance - DDS")
 
 with col_logo:
     
@@ -68,11 +69,27 @@ def carregar_snapshots():
                DESCRICAO_CUSTOMIZADA as descricao, QTD_TOTAL as qtd_total, 
                QTD_SUST as qtd_sust, QTD_DESV as qtd_desv, 
                QTD_TOTAL_NATIVA as qtd_total_nativa, QTD_SUST_NATIVA as qtd_sust_nativa, 
-               QTD_DESV_NATIVA as qtd_desv_nativa, DATA_REGISTRO as data_registro
+               QTD_DESV_NATIVA as qtd_desv_nativa, DATA_REGISTRO as data_registro,
+               QTD_TOTAL_POS as qtd_total_pos, QTD_SUST_POS as qtd_sust_pos, QTD_DESV_POS as qtd_desv_pos,
+               QTD_TOTAL_POS_NATIVA as qtd_total_pos_nativa, QTD_SUST_POS_NATIVA as qtd_sust_pos_nativa,
+               QTD_DESV_POS_NATIVA as qtd_desv_pos_nativa
         FROM TB_SPRINT_SNAPSHOT
         ORDER BY DATA_REGISTRO ASC
     """
     return conn.query(query)
+
+def carregar_conclusao_total():
+    # Ciclo total do burndown: entrada em "6.0 Concluído". Se a tabela não existir, a visão só fica vazia.
+    conn.reset()
+    query = """
+        SELECT ID_SPRINT as sprint_id, ISSUE_KEY as issue_key, PROJETO as projeto,
+               TIPO_ITEM as tipo_item, DATA_CONCLUSAO_TOTAL as data_conclusao
+        FROM TB_SPRINT_CONCLUSAO_TOTAL
+    """
+    try:
+        return conn.query(query)
+    except Exception:
+        return pd.DataFrame(columns=['sprint_id', 'issue_key', 'projeto', 'tipo_item', 'data_conclusao'])
 
 def carregar_backlog():
     conn.reset()
@@ -91,6 +108,29 @@ df_issues = carregar_issues()
 df_sprints = carregar_sprints()
 df_snapshots = carregar_snapshots()
 df_backlog = carregar_backlog()
+df_conclusao_total = carregar_conclusao_total()
+
+
+def carregar_fila_estado():
+    # Sem a tabela (ou sem dados da sprint), o burndown usa o cálculo anterior.
+    conn.reset()
+    query = """
+        SELECT ID_SPRINT as sprint_id, ISSUE_KEY as issue_key, PROJETO as projeto, TIPO_ITEM as tipo_item,
+               RESPONSAVEL as responsavel, STATUS as status, EM_SPRINT_ATIVA as em_sprint_ativa,
+               EM_BACKLOG2 as em_backlog2, VALIDO_DE as valido_de, VALIDO_ATE as valido_ate
+        FROM TB_SPRINT_FILA_ESTADO
+    """
+    try:
+        df = conn.query(query)
+        df['valido_de'] = pd.to_datetime(df['valido_de'])
+        df['valido_ate'] = pd.to_datetime(df['valido_ate'])
+        return df
+    except Exception:
+        return pd.DataFrame(columns=['sprint_id', 'issue_key', 'projeto', 'tipo_item', 'responsavel', 'status',
+                                     'em_sprint_ativa', 'em_backlog2', 'valido_de', 'valido_ate'])
+
+
+df_fila_estado = carregar_fila_estado()
 
 
 if not df_sprints.empty:
@@ -365,7 +405,7 @@ with aba_sincronizacao:
         # ---------------------------------------------------------
         if 'logs_jira' in st.session_state and len(st.session_state['logs_jira']) > 0:
             st.markdown("<br>", unsafe_allow_html=True)
-            with st.expander("📋 Ver detalhamento de tarefas atualizadas no Jira", expanded=True):
+            with st.expander(" Ver detalhamento de tarefas atualizadas no Jira", expanded=True):
                 st.info("O sistema preencheu automaticamente a 'Data de Contagem de Pontos' para as seguintes entregas:")
                 for log in st.session_state['logs_jira']:
                     st.write(log)
@@ -459,9 +499,9 @@ with aba_dashboard:
             itens_desv = len(df_sprint_desenvolvimento[df_sprint_desenvolvimento['categoria'] == 'Desenvolvimento'])
 
             fernando = obter_qtd("Fernando")
-            jonathan = obter_qtd("Jonathan Gabriel")
+            jonathan = obter_qtd("Jonathan Ferreira")
             thiago = obter_qtd("Thiago")
-            paulo = obter_qtd("Paulo")
+            paulo = obter_qtd("Paulo Domingues")  # só "Paulo" pegava também o dev "9. João Paulo"
             kaic = obter_qtd("Kaic de Castro")
             eder = obter_qtd("Eder")
             sergio = obter_qtd("Sergio")
@@ -493,7 +533,7 @@ with aba_dashboard:
                 colB.metric("Sustentação", itens_sust, f"{(itens_sust/total_itens*100):.1f}%" if total_itens > 0 else "0%")
                 colC.metric("Desenvolvimento", itens_desv, f"{(itens_desv/total_itens*100):.1f}%" if total_itens > 0 else "0%")
             
-            with st.expander("📊 Histórico de itens da Sprint (Planning vs Checkpoint vs Final)", expanded=False):
+            with st.expander(" Histórico de itens da Sprint (Planning vs Checkpoint vs Final)", expanded=False):
                 ini_tot, ini_sus, ini_des = 0, 0, 0
                 chk_tot, chk_sus, chk_des = 0, 0, 0
                 fin_tot, fin_sus, fin_des = 0, 0, 0
@@ -554,94 +594,95 @@ with aba_dashboard:
             st.divider()
 
             
-            with st.expander(" Matriz Comparativa)", expanded=False):
+            # Matriz Comparativa desativada a pedido da gestão (mantida comentada).
+            # with st.expander(" Matriz Comparativa)", expanded=False):
             
-                todas_sprints_nomes = df_sprints['nome_sprint'].tolist()
+            #     todas_sprints_nomes = df_sprints['nome_sprint'].tolist()
                 
-                sprints_selecionadas = st.multiselect(
+            #     sprints_selecionadas = st.multiselect(
                     
-                    "Selecione as Sprints para comparar (Colunas):",
-                    options=todas_sprints_nomes,
-                    default=todas_sprints_nomes[-4]
-                )
+            #         "Selecione as Sprints para comparar (Colunas):",
+            #         options=todas_sprints_nomes,
+            #         default=todas_sprints_nomes[-4]
+            #     )
                 
-                if sprints_selecionadas:
-                    linhas_apontadores = [
-                        "📦 Total de Itens",
-                        "🔧 Sustentação",
-                        "💻 Desenvolvimento",
-                        " Total Foco Sergio+Eder",
-                        " Sergio",
-                        " Eder",
-                        " Daniel",
+            #     if sprints_selecionadas:
+            #         linhas_apontadores = [
+            #             "📦 Total de Itens",
+            #             "🔧 Sustentação",
+            #             "💻 Desenvolvimento",
+            #             " Total Foco Sergio+Eder",
+            #             " Sergio",
+            #             " Eder",
+            #             " Daniel",
 
-                        " Total Análise",
-                        " Fernando",
-                        "Jonathan",
-                        "Thiago",
-                        "Paulo",
-                        "Kaic",
-                        "Enzo"
+            #             " Total Análise",
+            #             " Fernando",
+            #             "Jonathan",
+            #             "Thiago",
+            #             "Paulo",
+            #             "Kaic",
+            #             "Enzo"
             
-                    ]
+            #         ]
                     
-                    dados_matriz = {"Apontadores Principais": linhas_apontadores}
+            #         dados_matriz = {"Apontadores Principais": linhas_apontadores}
                     
-                    for nome_sp in sprints_selecionadas:
-                        id_sp = int(df_sprints[df_sprints['nome_sprint'] == nome_sp].iloc[0]['id'])
+            #         for nome_sp in sprints_selecionadas:
+            #             id_sp = int(df_sprints[df_sprints['nome_sprint'] == nome_sp].iloc[0]['id'])
                         
-                        tot, sus, des = 0, 0, 0
-                        qtd_sergio, qtd_eder, qtd_daniel = 0, 0, 0
-                        tot_foco_se = 0
+            #             tot, sus, des = 0, 0, 0
+            #             qtd_sergio, qtd_eder, qtd_daniel = 0, 0, 0
+            #             tot_foco_se = 0
 
-                        qtd_fernando,qtd_jonathan, qtd_thiago, qtd_paulo, qtd_kaic, qtd_enzo = 0, 0, 0, 0,0,0
-                        tot_analise = 0
+            #             qtd_fernando,qtd_jonathan, qtd_thiago, qtd_paulo, qtd_kaic, qtd_enzo = 0, 0, 0, 0,0,0
+            #             tot_analise = 0
                         
-                        if 'df_snapshots' in locals() and not df_snapshots.empty:
-                            snaps_sp = df_snapshots[df_snapshots['sprint_id'] == id_sp]
-                            if not snaps_sp.empty:
-                                last_snap = snaps_sp.iloc[-1]
-                                tot, sus, des = last_snap['qtd_total'], last_snap['qtd_sust'], last_snap['qtd_desv']
+            #             if 'df_snapshots' in locals() and not df_snapshots.empty:
+            #                 snaps_sp = df_snapshots[df_snapshots['sprint_id'] == id_sp]
+            #                 if not snaps_sp.empty:
+            #                     last_snap = snaps_sp.iloc[-1]
+            #                     tot, sus, des = last_snap['qtd_total'], last_snap['qtd_sust'], last_snap['qtd_desv']
                         
-                        if 'df_backlog' in locals() and not df_backlog.empty:
-                            col_id = next((col for col in df_backlog.columns if col.lower() in ['id_sprint', 'sprint_id']), None)
+            #             if 'df_backlog' in locals() and not df_backlog.empty:
+            #                 col_id = next((col for col in df_backlog.columns if col.lower() in ['id_sprint', 'sprint_id']), None)
                             
-                            if col_id:
-                                bk_sp = df_backlog[df_backlog[col_id] == id_sp]
+            #                 if col_id:
+            #                     bk_sp = df_backlog[df_backlog[col_id] == id_sp]
                                 
-                                if not bk_sp.empty:
-                                    col_resp = next((col for col in bk_sp.columns if col.lower() in ['responsavel', 'assignee', 'responsável']), None)
+            #                     if not bk_sp.empty:
+            #                         col_resp = next((col for col in bk_sp.columns if col.lower() in ['responsavel', 'assignee', 'responsável']), None)
                                     
-                                    if col_resp:
-                                        resps = bk_sp[col_resp].fillna('').str.lower()
+            #                         if col_resp:
+            #                             resps = bk_sp[col_resp].fillna('').str.lower()
                                         
-                                        qtd_sergio = resps.str.contains('sergio|sérgio').sum()
-                                        qtd_eder = resps.str.contains('eder').sum()
-                                        qtd_daniel = resps.str.contains('daniel').sum()
-                                        tot_foco_se = qtd_sergio + qtd_eder
+            #                             qtd_sergio = resps.str.contains('sergio|sérgio').sum()
+            #                             qtd_eder = resps.str.contains('eder').sum()
+            #                             qtd_daniel = resps.str.contains('daniel').sum()
+            #                             tot_foco_se = qtd_sergio + qtd_eder
                                         
-                                        qtd_fernando = resps.str.contains('fernando').sum()
-                                        qtd_jonathan = resps.str.contains('jonathan').sum()
-                                        qtd_thiago = resps.str.contains('thiago').sum()
-                                        qtd_paulo = resps.str.contains('paulo').sum()
-                                        qtd_kaic = resps.str.contains('kaic').sum()
-                                        qtd_enzo = resps.str.contains('enzo').sum()
+            #                             qtd_fernando = resps.str.contains('fernando').sum()
+            #                             qtd_jonathan = resps.str.contains('jonathan').sum()
+            #                             qtd_thiago = resps.str.contains('thiago').sum()
+            #                             qtd_paulo = resps.str.contains('paulo').sum()
+            #                             qtd_kaic = resps.str.contains('kaic').sum()
+            #                             qtd_enzo = resps.str.contains('enzo').sum()
 
                             
-                        dados_matriz[nome_sp] = [
-                            tot, sus, des,
-                            tot_foco_se, qtd_sergio, qtd_eder, qtd_daniel,
-                            tot_analise, qtd_jonathan,  qtd_paulo,  qtd_thiago, qtd_enzo, qtd_kaic, qtd_fernando,
-                        ]
+            #             dados_matriz[nome_sp] = [
+            #                 tot, sus, des,
+            #                 tot_foco_se, qtd_sergio, qtd_eder, qtd_daniel,
+            #                 tot_analise, qtd_jonathan,  qtd_paulo,  qtd_thiago, qtd_enzo, qtd_kaic, qtd_fernando,
+            #             ]
                     
-                    df_matriz = pd.DataFrame(dados_matriz)
+            #         df_matriz = pd.DataFrame(dados_matriz)
                     
-                    for col in sprints_selecionadas:
-                        df_matriz[col] = df_matriz[col].astype(int)
+            #         for col in sprints_selecionadas:
+            #             df_matriz[col] = df_matriz[col].astype(int)
                         
-                    st.dataframe(df_matriz, use_container_width=True, hide_index=True)
-                else:
-                    st.info("⚠️ Selecione pelo menos uma Sprint no filtro acima para visualizar o comparativo.")            
+            #         st.dataframe(df_matriz, use_container_width=True, hide_index=True)
+            #     else:
+            #         st.info("⚠️ Selecione pelo menos uma Sprint no filtro acima para visualizar o comparativo.")            
                 
             st.divider()
             col_eq1, col_eq2 = st.columns(2)
@@ -709,21 +750,20 @@ with aba_dashboard:
             with col_eq2:
                 with st.container(border=True):
                     st.markdown("####  Equipe de Análise")
-                    st.metric("Total Análise", fernando + jonathan + thiago + paulo + kaic + enzo)
+                    st.metric("Total Análise", fernando + jonathan + thiago + paulo + enzo)
                     st.divider()
-                    
-                    c1, c2, c3, c4, c5, c6 = st.columns(6)
+
+                    c1, c2, c3, c4, c5 = st.columns(5)
                     c1.metric("Fernando", fernando)
                     c2.metric("Jonathan", jonathan)
                     c3.metric("Thiago", thiago)
                     c4.metric("Paulo", paulo)
-                    c5.metric("Kaic", kaic)
-                    c6.metric("Enzo", enzo)
+                    c5.metric("Enzo", enzo)
 
                     st.markdown("<br>", unsafe_allow_html=True)
                     df_an_comp = pd.DataFrame({
-                        'responsavel': ["Fernando", "Jonathan", "Thiago", "Paulo", "Kaic", "Enzo"],
-                        'quantidade': [fernando, jonathan, thiago, paulo, kaic, enzo]
+                        'responsavel': ["Fernando", "Jonathan", "Thiago", "Paulo", "Enzo"],
+                        'quantidade': [fernando, jonathan, thiago, paulo, enzo]
                     })
                     
                     if not df_an_comp.empty and df_an_comp['quantidade'].sum() > 0:
@@ -738,12 +778,12 @@ with aba_dashboard:
                         with st.expander(" Detalhes de itens da Equipe de Análise"):
                             analista_selecionado = st.selectbox(
                                 "Filtrar tarefas de:", 
-                                ["Todos da Equipe", "Fernando", "Jonathan Gabriel", "Thiago Honorato", "Paulo Domingues", "Kaic De Castro", "Enzo"],
+                                ["Todos da Equipe", "Fernando", "Jonathan Ferreira", "Thiago Honorato", "Paulo Domingues", "Enzo"],
                                 label_visibility="collapsed" 
                             )
                             
                             if analista_selecionado == "Todos da Equipe":
-                                df_detalhe = df_backlog_filtrado[df_backlog_filtrado['responsavel'].str.contains("Fernando|Jonathan|Thiago|Paulo|Kaic|Enzo", case=False, na=False)].copy()
+                                df_detalhe = df_backlog_filtrado[df_backlog_filtrado['responsavel'].str.contains("Fernando|Jonathan Ferreira|Thiago|Paulo Domingues|Enzo", case=False, na=False)].copy()
                             else:
                                 df_detalhe = df_backlog_filtrado[df_backlog_filtrado['responsavel'].str.contains(analista_selecionado, case=False, na=False)].copy()
                             
@@ -1042,7 +1082,7 @@ with aba_dashboard:
 
         st.divider()
 
-        st.subheader(f"✅ Entregas da {sprint_selecionada.split(' - ')[0]} (Pontos)")
+        st.subheader(f"Entregas da {sprint_selecionada.split(' - ')[0]} (Pontos)")
 
         if not df_filtrado.empty:
             
@@ -1061,7 +1101,7 @@ with aba_dashboard:
             col_rank1, col_rank2 = st.columns([2, 3])
             
             with col_rank1:
-                    st.write("🏆 Entregas por Desenvolvedor")
+                    st.write("Entregas por Desenvolvedor")
                     
                     df_ranking = df_filtrado.groupby('responsavel')['pontos'].sum().reset_index()
                     df_ranking = df_ranking[df_ranking['pontos'] > 0]
@@ -1142,30 +1182,36 @@ with aba_dashboard:
                     df_ritmo = df_filtrado.copy()
                     df_ritmo['pontos'] = pd.to_numeric(df_ritmo['pontos'], errors='coerce').fillna(0.0)
 
-                    qtd_devs_ativos = QTD_DEVS_EQUIPE
+                    s_dev, s_dias = st.columns(2)
+                    qtd_devs_ativos = s_dev.slider(
+                        "Quantidade de devs:", min_value=1, max_value=20, value=QTD_DEVS_EQUIPE,
+                        key=f"slider_devs_ritmo_{id_sprint_selecionada}",
+                        help="Denominador da média por dev. Quem não entregou nada também conta."
+                    )
+                    dias_considerados = s_dias.slider(
+                        f"Dias úteis considerados (de {dias_uteis_totais}):", min_value=0, max_value=dias_uteis_totais,
+                        value=dias_uteis_decorridos, key=f"slider_dias_ritmo_{id_sprint_selecionada}",
+                        help="Padrão: dias úteis (seg-sex) desde o início da sprint até hoje."
+                    )
 
                     pontos_realizados = float(df_ritmo['pontos'].sum())
                     media_real_por_dev = pontos_realizados / qtd_devs_ativos
 
-                    # Esperado proporcional aos dias úteis JÁ DECORRIDOS -- comparar o parcial da
-                    # sprint contra a meta cheia acusaria atraso todo dia até o último.
-                    esperado_por_dev = PONTOS_POR_SEMANA_DEV * (dias_uteis_decorridos / DIAS_UTEIS_SEMANA)
-                    esperado_por_dev_total = PONTOS_POR_SEMANA_DEV * (dias_uteis_totais / DIAS_UTEIS_SEMANA)
-                    esperado_equipe_total = esperado_por_dev_total * qtd_devs_ativos
+                    # Esperado proporcional aos dias úteis considerados, não à sprint inteira.
+                    esperado_por_dev = PONTOS_POR_SEMANA_DEV * (dias_considerados / DIAS_UTEIS_SEMANA)
+                    esperado_equipe_total = PONTOS_POR_SEMANA_DEV * (dias_uteis_totais / DIAS_UTEIS_SEMANA) * qtd_devs_ativos
 
                     desvio_por_dev = media_real_por_dev - esperado_por_dev
                     pct_atingido = (media_real_por_dev / esperado_por_dev * 100) if esperado_por_dev > 0 else 0.0
 
-                    r1, r2, r3, r4 = st.columns(4)
+                    r1, r2, r3, r4, r5 = st.columns(5)
                     r1.metric("Pontos Entregues", f"{pontos_realizados:.1f}")
                     r2.metric("Média por Dev", f"{media_real_por_dev:.1f} pts")
-                    r3.metric("Esperado por Dev", f"{esperado_por_dev:.1f} pts")
+                    r3.metric("Esperado por Dev", f"{esperado_por_dev:.1f} pts",
+                              help=f"{PONTOS_POR_SEMANA_DEV} pts por semana útil × {dias_considerados} dia(s) útil(eis) / {DIAS_UTEIS_SEMANA}.")
                     r4.metric("Ritmo", f"{pct_atingido:.0f}%", delta=f"{desvio_por_dev:+.1f} pts/dev")
-
-                    r5, r6, r7 = st.columns(3)
-                    r5.metric("Dias Úteis", f"{dias_uteis_decorridos} de {dias_uteis_totais}")
-                    r6.metric("Meta da Sprint", f"{esperado_por_dev_total:.1f} pts/dev")
-                    r7.metric("Meta da Equipe", f"{esperado_equipe_total:.1f} pts")
+                    r5.metric("Meta da Equipe (sprint)", f"{esperado_equipe_total:.1f} pts",
+                              help=f"Sprint inteira ({dias_uteis_totais} dias úteis) × {qtd_devs_ativos} devs.")
 
                     st.divider()
 
@@ -1235,18 +1281,27 @@ with aba_dashboard:
 
         st.subheader("Burndown da Sprint")
 
-        col_b1, col_b2 = st.columns(2)
+        col_b1, col_b2, col_b3 = st.columns(3)
         with col_b1:
             escopo_burndown = st.radio(
-                "Escopo:", 
-                ["Somente Desenvolvedores", "Toda a Equipe"], 
+                "Escopo:",
+                ["Sprint Atual", "Sprint Atual + Backlog 2"],
                 horizontal=True
             )
         with col_b2:
             visao_burndown = st.radio(
-                "Visão:", 
-                ["Geral", "Sustentação", "Desenvolvimento"], 
+                "Visão:",
+                ["Geral", "Sustentação", "Desenvolvimento"],
                 horizontal=True
+            )
+        with col_b3:
+            ciclo_burndown = st.radio(
+                "Ciclo:",
+                ["Parcial (até 3.3)", "Total (até 6.0 Concluído)"],
+                horizontal=True, key="radio_ciclo_burndown",
+                help="Parcial: o item sai do restante ao entrar em 3.3 Revisão de Código (cálculo original). "
+                     "Total: só sai ao entrar em 6.0 Concluído. Pendências de terceiros (5.0/5.1/5.2) e "
+                     "7.0 Dispensado ficam fora das duas contas no ciclo total."
             )
 
         col1, col2, col3 = st.columns([2, 1, 1])
@@ -1273,7 +1328,7 @@ with aba_dashboard:
                 df_filtrado['categoria'] = df_filtrado['tipo_item'].apply(lambda x: "Sustentação" if str(x).lower() in tipos_sustentacao else "Desenvolvimento")
 
             
-            if escopo_burndown == "Somente Desenvolvedores":
+            if escopo_burndown == "Sprint Atual":
                 df_base = df_sprint_desenvolvimento.copy() if 'df_sprint_desenvolvimento' in locals() else df_backlog_filtrado.copy()
                 col_snap_prefix = 'qtd_{}_nativa'
             else:
@@ -1294,10 +1349,118 @@ with aba_dashboard:
                 col_snapshot = col_snap_prefix.format('desv')
 
             total_atual_pendentes = len(df_backlog_ativo)
-            tickets_iniciais = total_atual_pendentes + len(df_filtrado_ativo)
-            
-            if 'df_snapshots' in locals() and not df_snapshots.empty:
-                snaps_sp = df_snapshots[df_snapshots['sprint_id'] == id_sprint].copy()
+
+            # Burndown individual: snapshots não têm pessoa, então a curva é reconstruída item a item.
+            # Fila real (TB_SPRINT_FILA_ESTADO): quando existe, o item conta a partir da entrada na sprint.
+            df_fila_sp = (df_fila_estado[pd.to_numeric(df_fila_estado['sprint_id'], errors='coerce') == id_sprint].copy()
+                          if not df_fila_estado.empty else df_fila_estado)
+            usar_fila_real = not df_fila_sp.empty
+
+            _resp_opcoes = pd.concat([
+                df_backlog_filtrado['responsavel'] if not df_backlog_filtrado.empty else pd.Series(dtype=str),
+                df_filtrado['responsavel'] if not df_filtrado.empty else pd.Series(dtype=str),
+                df_fila_sp['responsavel'] if usar_fila_real else pd.Series(dtype=str),
+            ]).dropna().astype(str).str.strip()
+            opcoes_pessoas_bd = sorted(p for p in _resp_opcoes.unique() if p)
+            with col6:
+                pessoas_burndown = st.multiselect(
+                    "Pessoas (burndown individual):", opcoes_pessoas_bd,
+                    key=f"multiselect_pessoas_burndown_{id_sprint}",
+                    placeholder="Toda a equipe",
+                    help="Vazio = equipe inteira (cálculo padrão pelos snapshots). "
+                         "Com pessoas selecionadas, a curva é reconstruída a partir dos itens delas, sem os Ajustes."
+                )
+            # Com a fila real, o filtro por pessoa vale também no ciclo total (o estado guarda o responsável).
+            filtro_pessoas_bd = bool(pessoas_burndown) and (ciclo_burndown.startswith("Parcial") or usar_fila_real)
+            if pessoas_burndown and not filtro_pessoas_bd:
+                st.info("O filtro por pessoa vale só para o ciclo parcial: o ciclo total não guarda "
+                        "de quem são os itens entre 3.3 e 6.0. O gráfico abaixo mostra a equipe inteira.")
+            # Ajuste é subtarefa no Jira: contaria o mesmo trabalho duas vezes.
+            TIPOS_FORA_BURNDOWN_INDIVIDUAL = ["ajuste"]
+
+            def _filtro_pessoas_e_tipo(df):
+                if df.empty:
+                    return df
+                d = df[df['responsavel'].astype(str).str.strip().isin(pessoas_burndown)]
+                return d[~d['tipo_item'].astype(str).str.lower().str.strip().isin(TIPOS_FORA_BURNDOWN_INDIVIDUAL)].copy()
+
+            if filtro_pessoas_bd:
+                df_backlog_ativo = _filtro_pessoas_e_tipo(df_backlog_ativo)
+                df_filtrado_ativo = _filtro_pessoas_e_tipo(df_filtrado_ativo)
+                total_atual_pendentes = len(df_backlog_ativo)
+
+            # Na fila real, Ajuste fica fora também do burndown da equipe.
+            def _sem_ajuste(df):
+                if df is None or df.empty or 'tipo_item' not in df.columns:
+                    return df
+                return df[~df['tipo_item'].astype(str).str.lower().str.strip().isin(TIPOS_FORA_BURNDOWN_INDIVIDUAL)].copy()
+
+            if usar_fila_real:
+                df_backlog_ativo = _sem_ajuste(df_backlog_ativo)
+                df_filtrado_ativo = _sem_ajuste(df_filtrado_ativo)
+
+            # Snapshots não separam projeto: com parte dos projetos, usa a reconstrução item a item.
+            filtro_projeto_bd = set(projeto) != set(projetos_disponiveis)
+            if filtro_projeto_bd and not ciclo_burndown.startswith("Parcial") and not usar_fila_real:
+                st.warning("O ciclo total ainda não separa por projeto: a contagem de itens entre 3.3 e 6.0 é "
+                           "gravada somando todos os projetos. Para ver um projeto só, use o ciclo parcial "
+                           "ou marque todos os projetos na barra lateral.")
+            # Reconstrução item a item: pessoas selecionadas e/ou parte dos projetos (só no ciclo parcial).
+            reconstruir_bd = (not usar_fila_real) and ciclo_burndown.startswith("Parcial") and (filtro_pessoas_bd or filtro_projeto_bd)
+
+            # Ciclo total troca só as fontes (snapshots, entregas históricas, concluídos); o cálculo é o mesmo.
+            df_snapshots_bd = df_snapshots
+            df_entregas_hist_bd = df_issues
+            df_concluidos_bd = df_filtrado_ativo
+            ciclo_total = ciclo_burndown.startswith("Total")
+
+            if ciclo_total:
+                # Restante = backlog (antes de 3.3) + itens entre 3.3 e 6.0 (colunas *_POS).
+                col_pos = col_snapshot.replace('_nativa', '') + '_pos' + ('_nativa' if col_snapshot.endswith('_nativa') else '')
+                df_snapshots_bd = df_snapshots.copy()
+                if col_pos in df_snapshots_bd.columns:
+                    df_snapshots_bd['restante_ciclo_total'] = (
+                        pd.to_numeric(df_snapshots_bd[col_snapshot], errors='coerce')
+                        + pd.to_numeric(df_snapshots_bd[col_pos], errors='coerce')
+                    )
+                else:
+                    df_snapshots_bd['restante_ciclo_total'] = float('nan')
+                col_snapshot = 'restante_ciclo_total'
+
+                # Hoje: backlog atual + contagem pós-desenvolvimento da última sincronização da sprint.
+                if col_pos in df_snapshots.columns:
+                    pos_sprint = pd.to_numeric(df_snapshots[df_snapshots['sprint_id'] == id_sprint][col_pos], errors='coerce').dropna()
+                else:
+                    pos_sprint = pd.Series(dtype=float)
+                total_atual_pendentes = (len(df_backlog_ativo) + int(pos_sprint.iloc[-1])) if not pos_sprint.empty else None
+
+                # Concluídos = entrada em 6.0 Concluído (TB_SPRINT_CONCLUSAO_TOTAL).
+                df_ct = df_conclusao_total.copy()
+                if not df_ct.empty:
+                    df_ct['sprint_id'] = pd.to_numeric(df_ct['sprint_id'], errors='coerce').fillna(0).astype(int)
+                    df_ct['projeto'] = df_ct['projeto'].astype(str).str.strip()
+                    df_ct = df_ct[df_ct['projeto'].isin(projeto)].copy()
+                    df_ct['categoria'] = df_ct['tipo_item'].apply(lambda x: "Sustentação" if str(x).lower() in tipos_sustentacao else "Desenvolvimento")
+                df_entregas_hist_bd = df_ct
+                df_concluidos_bd = df_ct[df_ct['sprint_id'] == id_sprint].copy() if not df_ct.empty else df_ct
+                if visao_burndown != "Geral" and not df_concluidos_bd.empty:
+                    df_concluidos_bd = df_concluidos_bd[df_concluidos_bd['categoria'] == visao_burndown].copy()
+                if filtro_pessoas_bd and not df_concluidos_bd.empty:
+                    # TB_SPRINT_CONCLUSAO_TOTAL não guarda o responsável: busca em DETAILS/BACKLOG pela chave.
+                    _resp_ct = (pd.concat([df_backlog, df_issues], ignore_index=True)[['issue_key', 'responsavel']]
+                                .drop_duplicates(subset=['issue_key'], keep='last'))
+                    df_concluidos_bd = _filtro_pessoas_e_tipo(df_concluidos_bd.merge(_resp_ct, on='issue_key', how='left'))
+                if usar_fila_real:
+                    df_concluidos_bd = _sem_ajuste(df_concluidos_bd)
+
+                if total_atual_pendentes is None:
+                    st.info("Ciclo total ainda sem a contagem de itens entre 3.3 e 6.0 para esta sprint. "
+                            "Ela passa a ser gravada a partir da próxima sincronização em 'Gerenciar Sprints'.")
+
+            tickets_iniciais = (total_atual_pendentes or 0) + len(df_concluidos_bd)
+
+            if 'df_snapshots_bd' in locals() and not df_snapshots_bd.empty:
+                snaps_sp = df_snapshots_bd[df_snapshots_bd['sprint_id'] == id_sprint].copy()
                 snaps_inicio = snaps_sp[snaps_sp['fase'] == 'INICIO']
                 if not snaps_inicio.empty:
                     valor_snap = snaps_inicio.iloc[-1].get(col_snapshot, 0)
@@ -1312,6 +1475,35 @@ with aba_dashboard:
             qtd_dias = (data_fim - data_ini).days + 1
             dias_sprint = [data_ini + timedelta(days=x) for x in range(qtd_dias)]
 
+            # Reconstrução: restante no dia d = criado até d e sem entrada em 3.3 até d.
+            def _base_reconstrucao(df_pend, df_entr):
+                partes = []
+                if df_pend is not None and not df_pend.empty:
+                    p = df_pend[['issue_key', 'data_criacao']].copy()
+                    p['_concl'] = pd.NaT
+                    partes.append(p)
+                if df_entr is not None and not df_entr.empty:
+                    e = df_entr[['issue_key', 'data_criacao']].copy()
+                    e['_concl'] = pd.to_datetime(df_entr['data_conclusao'], errors='coerce')
+                    partes.append(e)
+                if not partes:
+                    return pd.DataFrame(columns=['issue_key', '_criado', '_concl'])
+                # Mesma issue pendente e entregue: vale a entrega (mesmo critério da linha de concluídos).
+                base = pd.concat(partes, ignore_index=True).drop_duplicates(subset=['issue_key'], keep='last')
+                criado = pd.to_datetime(base['data_criacao'], errors='coerce').dt.date
+                concl = pd.to_datetime(base['_concl'], errors='coerce').dt.date
+                base['_criado'] = criado.where(criado.notna(), datetime.min.date())
+                base['_concl'] = concl.where(concl.notna(), datetime.max.date())
+                return base
+
+            def _restante_no_dia(base, dia):
+                return int(((base['_criado'] <= dia) & (base['_concl'] > dia)).sum())
+
+            if reconstruir_bd:
+                base_pessoas_bd = _base_reconstrucao(df_backlog_ativo, df_filtrado_ativo)
+                # Diretriz: itens do recorte que já existiam no 1º dia (o snapshot de INÍCIO é da equipe toda).
+                tickets_iniciais = int((base_pessoas_bd['_criado'] <= data_ini).sum()) if not base_pessoas_bd.empty else 0
+
             media_entrega_por_dia = []
             media_restante_por_dia = [None] * qtd_dias
             historico_restante = {d: None for d in range(qtd_dias)}
@@ -1324,9 +1516,9 @@ with aba_dashboard:
 
                 historico_restante = {d: [] for d in range(qtd_dias)}
 
-                if 'df_snapshots' in locals() and not df_snapshots.empty:
-                    df_snaps_hist = df_snapshots[
-                        df_snapshots['sprint_id'].isin(ids_sprints_anteriores)
+                if 'df_snapshots_bd' in locals() and not df_snapshots_bd.empty:
+                    df_snaps_hist = df_snapshots_bd[
+                        df_snapshots_bd['sprint_id'].isin(ids_sprints_anteriores)
                     ].copy()
                     
                     df_snaps_hist[col_snapshot] = pd.to_numeric(df_snaps_hist[col_snapshot], errors='coerce')
@@ -1380,10 +1572,10 @@ with aba_dashboard:
 
                 historico_dias_entrega = {d: [] for d in range(qtd_dias)}
 
-                if not df_issues.empty and ids_sprints_anteriores:
-                    df_issues_hist = df_issues[
-                        (df_issues['projeto'].isin(projeto)) &
-                        (df_issues['sprint_id'].isin(ids_sprints_anteriores))
+                if not df_entregas_hist_bd.empty and ids_sprints_anteriores:
+                    df_issues_hist = df_entregas_hist_bd[
+                        (df_entregas_hist_bd['projeto'].isin(projeto)) &
+                        (df_entregas_hist_bd['sprint_id'].isin(ids_sprints_anteriores))
                     ].copy()
                     
                     if not df_issues_hist.empty:
@@ -1437,12 +1629,199 @@ with aba_dashboard:
             if 'snaps_sp' in locals() and not snaps_sp.empty:
                 snaps_sp['data_dt'] = (pd.to_datetime(snaps_sp['data_registro']) - pd.Timedelta(hours=3)).dt.date
                 dict_real_diario = snaps_sp.sort_values('data_registro').groupby('data_dt')[col_snapshot].last().to_dict()
+                if ciclo_total:
+                    # Dias só com snapshots anteriores às colunas *_POS não têm valor de ciclo total.
+                    dict_real_diario = {d: v for d, v in dict_real_diario.items() if pd.notnull(v)}
+
+            if reconstruir_bd:
+                # Trabalho Restante dia a dia pela reconstrução (vale também para os dias sem sincronização).
+                dict_real_diario = (
+                    {dia: _restante_no_dia(base_pessoas_bd, dia) for dia in dias_sprint if dia <= datetime.now().date()}
+                    if not base_pessoas_bd.empty else {}
+                )
+
+                # Médias das sprints anteriores com os mesmos filtros.
+                def _filtro_hist(df, sp_id, eh_pendente):
+                    if df.empty:
+                        return df
+                    d = df[(df['sprint_id'] == sp_id) & (df['projeto'].isin(projeto))].copy()
+                    if filtro_pessoas_bd:
+                        d = _filtro_pessoas_e_tipo(d)
+                    if eh_pendente and escopo_burndown == "Sprint Atual" and 'sprint_nativa' in d.columns:
+                        d = d[d['sprint_nativa'] == 'SIM']
+                    if visao_burndown != "Geral":
+                        cat = d['tipo_item'].apply(lambda x: "Sustentação" if str(x).lower() in tipos_sustentacao else "Desenvolvimento")
+                        d = d[cat == visao_burndown]
+                    return d
+
+                restantes_hist_p = {i: [] for i in range(qtd_dias)}
+                entregas_hist_p = {i: [] for i in range(qtd_dias)}
+                try:
+                    _idx = df_sprints.index[df_sprints['id'] == id_sprint].tolist()[0]
+                    _anteriores = df_sprints.iloc[_idx + 1: _idx + 1 + num_sprints]
+                except IndexError:
+                    _anteriores = df_sprints.iloc[0:0]
+                for _, sp_row in _anteriores.iterrows():
+                    sp_id = int(sp_row['id'])
+                    sp_ini = pd.to_datetime(sp_row['data_inicio']).date()
+                    base_sp = _base_reconstrucao(_filtro_hist(df_backlog, sp_id, True), _filtro_hist(df_issues, sp_id, False))
+                    if base_sp.empty:
+                        continue
+                    for i in range(qtd_dias):
+                        dia_sp = sp_ini + timedelta(days=i)
+                        restantes_hist_p[i].append(_restante_no_dia(base_sp, dia_sp))
+                        entregas_hist_p[i].append(int(((base_sp['_concl'] >= sp_ini) & (base_sp['_concl'] <= dia_sp)).sum()))
+                media_restante_por_dia = [round(sum(v) / len(v), 1) if v else None for v in restantes_hist_p.values()]
+                media_entrega_por_dia = [round(sum(v) / len(v), 1) if v else None for v in entregas_hist_p.values()]
 
             dict_concluidos_diario = {}
-            if not df_filtrado_ativo.empty:
-                df_filtrado_copy = df_filtrado_ativo.copy()
+            if not df_concluidos_bd.empty:
+                df_filtrado_copy = df_concluidos_bd.copy()
                 df_filtrado_copy['data_conclusao_dt'] = pd.to_datetime(df_filtrado_copy['data_conclusao']).dt.date
                 dict_concluidos_diario = df_filtrado_copy.groupby('data_conclusao_dt').size().to_dict()
+
+            # Fila real: o item está no restante enquanto estiver na sprint, não for Bug/Ajuste e estiver antes
+            # do fim do ciclo. Responsável, tipo e status são os de cada momento.
+            STATUS_FORA_FILA_PARCIAL = {s.lower() for s in [
+                "6.0 Concluído", "6.0 Pend. Merge p/ Homol.", "6.1 Pend. Gerar Artefatos", "6.2 Pend. Envio Homolog.",
+                "7.0 Dispensado", "5.0 Pendência do Usuário", "5.1 Esperando por Aprovação", "5.2 Comercial - Aprovado",
+                "5.3 Pendência de Homolog", "3.3 Revisão de Código", "4.0 A TESTAR", "4.1 Testando", "4.2 Mergear",
+                "4.3 Pend. Versão",  # mesma lista que a sincronização exclui do backlog...
+                "5.1.1 Em quarentena"]}  # ...+ quarentena, que conta como concluído (decisão da gestão)
+            STATUS_FORA_FILA_TOTAL = {s.lower() for s in [
+                "6.0 Concluído", "7.0 Dispensado", "5.0 Pendência do Usuário", "5.1 Esperando por Aprovação",
+                "5.2 Comercial - Aprovado", "5.1.1 Em quarentena"]}
+            # Entrar em quarentena conta como conclusão na linha de Concluídos (além de sair do restante).
+            STATUS_CONCLUSAO_EXTRA = "5.1.1 em quarentena"
+            agora_local = pd.Timestamp.now(tz="America/Sao_Paulo").tz_localize(None)
+
+            def _recorte_fila(df_est):
+                """Filtros que não dependem do tempo: projeto, escopo, ciclo, visão e pessoas."""
+                if df_est.empty:
+                    return df_est
+                d = df_est[(df_est['tipo_item'].astype(str).str.lower() != 'bug') & (df_est['projeto'].isin(projeto))]
+                if escopo_burndown == "Sprint Atual":
+                    d = d[d['em_sprint_ativa'] == 1]
+                else:
+                    d = d[(d['em_sprint_ativa'] == 1) | (d['em_backlog2'] == 1)]
+                fora = STATUS_FORA_FILA_TOTAL if ciclo_total else STATUS_FORA_FILA_PARCIAL
+                d = d[~d['status'].astype(str).str.lower().isin(fora)]
+                if visao_burndown != "Geral":
+                    cat = d['tipo_item'].apply(lambda x: "Sustentação" if str(x).lower() in tipos_sustentacao else "Desenvolvimento")
+                    d = d[cat == visao_burndown]
+                if filtro_pessoas_bd:
+                    d = _filtro_pessoas_e_tipo(d)
+                return _sem_ajuste(d)
+
+            def _fila_em(d, t):
+                return set(d.loc[(d['valido_de'] <= t) & (d['valido_ate'].isna() | (d['valido_ate'] > t)), 'issue_key'])
+
+            def _filas_por_dia(d, ini):
+                """Fila no fim de cada dia da sprint (até agora) + entradas/saídas de cada dia."""
+                filas, entradas, saidas = {}, {}, {}
+                anterior = _fila_em(d, pd.Timestamp(ini))
+                for offset in range(qtd_dias):
+                    dia_x = ini + timedelta(days=offset)
+                    if pd.Timestamp(dia_x) > agora_local:
+                        break
+                    # Fim do dia = 23:59:59 (o último período de uma sprint encerrada termina às 23:59:59.999).
+                    t = min(pd.Timestamp(dia_x) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1), agora_local)
+                    atual = _fila_em(d, t)
+                    filas[offset], entradas[offset], saidas[offset] = atual, atual - anterior, anterior - atual
+                    anterior = atual
+                return filas, entradas, saidas
+
+            def _quarentenas(df_est, saidas, ini, ja_concluidos, status_alvo_saida=None):
+                """Saídas da fila que foram para um status de conclusão -> [(dia, chave)]. Padrão: 5.1.1 Em
+                quarentena. Cada item conta uma vez e não conta se já foi concluído por outro critério."""
+                status_alvo_saida = status_alvo_saida or {STATUS_CONCLUSAO_EXTRA}
+                grupos = {k: g for k, g in df_est.groupby('issue_key')} if not df_est.empty else {}
+                vistos, achados = set(ja_concluidos), []
+                for o in sorted(saidas):
+                    dia_x = ini + timedelta(days=o)
+                    t = min(pd.Timestamp(dia_x) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1), agora_local)
+                    for k in sorted(saidas[o] - vistos):
+                        g = grupos.get(k)
+                        if g is None:
+                            continue
+                        linha = g[(g['valido_de'] <= t) & (g['valido_ate'].isna() | (g['valido_ate'] > t))]
+                        if not linha.empty and str(linha.iloc[0]['status']).lower() in status_alvo_saida:
+                            achados.append((dia_x, k))
+                            vistos.add(k)
+                return achados
+
+            quarentena_itens = []
+            if usar_fila_real:
+                fila_recorte = _recorte_fila(df_fila_sp)
+                filas_dia, entradas_fila_dia, saidas_fila_dia = _filas_por_dia(fila_recorte, data_ini)
+                if ciclo_total:
+                    # Ciclo total: conclusão = saída da fila para 6.0, pela própria fila real.
+                    concl_6 = _quarentenas(df_fila_sp, saidas_fila_dia, data_ini, set(), {"6.0 concluído"})
+                    df_concluidos_bd = pd.DataFrame({'issue_key': [k for _, k in concl_6],
+                                                     'data_conclusao': [pd.Timestamp(d) for d, _ in concl_6]})
+                    dict_concluidos_diario = {}
+                    for dia_c, _ in concl_6:
+                        dict_concluidos_diario[dia_c] = dict_concluidos_diario.get(dia_c, 0) + 1
+                quarentena_itens = _quarentenas(
+                    df_fila_sp, saidas_fila_dia, data_ini,
+                    set(df_concluidos_bd['issue_key']) if not df_concluidos_bd.empty else set())
+                for dia_q, _ in quarentena_itens:
+                    dict_concluidos_diario[dia_q] = dict_concluidos_diario.get(dia_q, 0) + 1
+                dict_real_diario = {data_ini + timedelta(days=o): len(f) for o, f in filas_dia.items()}
+                # Hoje também vem da fila (o backlog sincronizado não é mais a fonte do ponto de hoje).
+                total_atual_pendentes = None
+                # Diretriz: fila no fim do 1º dia + concluídos nele.
+                tickets_iniciais = (len(filas_dia[0]) + dict_concluidos_diario.get(data_ini, 0)) if 0 in filas_dia else 0
+
+                # Médias das sprints anteriores pela mesma regra (só as que têm fila reconstruída).
+                restantes_hist_f = {i: [] for i in range(qtd_dias)}
+                entregas_hist_f = {i: [] for i in range(qtd_dias)}
+                try:
+                    _idx_f = df_sprints.index[df_sprints['id'] == id_sprint].tolist()[0]
+                    _anteriores_f = df_sprints.iloc[_idx_f + 1: _idx_f + 1 + num_sprints]
+                except IndexError:
+                    _anteriores_f = df_sprints.iloc[0:0]
+                for _, sp_row in _anteriores_f.iterrows():
+                    sp_id = int(sp_row['id'])
+                    sp_ini = pd.to_datetime(sp_row['data_inicio']).date()
+                    fila_sp_ant = _recorte_fila(df_fila_estado[pd.to_numeric(df_fila_estado['sprint_id'], errors='coerce') == sp_id])
+                    if fila_sp_ant.empty:
+                        continue
+                    filas_ant, _, saidas_ant = _filas_por_dia(fila_sp_ant, sp_ini)
+                    for o, f in filas_ant.items():
+                        restantes_hist_f[o].append(len(f))
+                    # Entregas acumuladas da sprint anterior com os mesmos filtros (projeto, visão, pessoas).
+                    entr_ant = df_entregas_hist_bd[df_entregas_hist_bd['sprint_id'] == sp_id] if not df_entregas_hist_bd.empty else df_entregas_hist_bd
+                    if ciclo_total:
+                        # Mesma regra da sprint atual: conclusão = saída da fila para 6.0, pela fila real.
+                        _c6 = _quarentenas(df_fila_estado[pd.to_numeric(df_fila_estado['sprint_id'], errors='coerce') == sp_id],
+                                           saidas_ant, sp_ini, set(), {"6.0 concluído"})
+                        entr_ant = pd.DataFrame({'issue_key': [k for _, k in _c6],
+                                                 'data_conclusao': [pd.Timestamp(d) for d, _ in _c6]})
+                    elif not entr_ant.empty:
+                        entr_ant = entr_ant[entr_ant['projeto'].isin(projeto)]
+                        if visao_burndown != "Geral":
+                            cat_e = entr_ant['tipo_item'].apply(lambda x: "Sustentação" if str(x).lower() in tipos_sustentacao else "Desenvolvimento")
+                            entr_ant = entr_ant[cat_e == visao_burndown]
+                        if filtro_pessoas_bd:
+                            if 'responsavel' not in entr_ant.columns:
+                                _resp_e = (pd.concat([df_backlog, df_issues], ignore_index=True)[['issue_key', 'responsavel']]
+                                           .drop_duplicates(subset=['issue_key'], keep='last'))
+                                entr_ant = entr_ant.merge(_resp_e, on='issue_key', how='left')
+                            entr_ant = _filtro_pessoas_e_tipo(entr_ant)
+                        entr_ant = _sem_ajuste(entr_ant)
+                    concl_ant = (pd.to_datetime(entr_ant['data_conclusao'], errors='coerce').dt.date
+                                 if not entr_ant.empty else pd.Series(dtype=object))
+                    # Quarentenas da sprint anterior também contam como conclusão (mesma regra da atual).
+                    q_ant = _quarentenas(
+                        df_fila_estado[pd.to_numeric(df_fila_estado['sprint_id'], errors='coerce') == sp_id],
+                        saidas_ant, sp_ini, set(entr_ant['issue_key']) if not entr_ant.empty else set())
+                    for o in range(qtd_dias):
+                        limite = sp_ini + timedelta(days=o)
+                        entregas_hist_f[o].append(int(((concl_ant >= sp_ini) & (concl_ant <= limite)).sum())
+                                                  + sum(1 for d_q, _ in q_ant if d_q <= limite))
+                media_restante_por_dia = [round(sum(v) / len(v), 1) if v else None for v in restantes_hist_f.values()]
+                media_entrega_por_dia = [round(sum(v) / len(v), 1) if v else None for v in entregas_hist_f.values()]
 
             bd_dados = []
             passo_ideal = tickets_iniciais / (qtd_dias - 1) if qtd_dias > 1 else 0
@@ -1454,29 +1833,35 @@ with aba_dashboard:
             # (ex.: dias em que a extração falhava por causa do bug do ANALISTAS). Agora deixamos None
             # (lacuna no gráfico) até o primeiro dado real conhecido.
             ultimo_valor_conhecido = None
-            # "Itens Incluídos" (escopo aumentando) só pode ser calculado ENTRE DOIS PONTOS COM SNAPSHOT
-            # REAL (não entre carry-forwards) -- senão todo dia sem sincronização apareceria como se
-            # tivesse ganhado escopo igual ao que foi concluído naquele dia, o que é falso.
-            ultimo_valor_real = None
             total_concluidos_acumulado = 0
+
+            # Incluídos (Diário) sem fila real: itens do recorte criados no dia (mesma regra do expander).
+            _partes_incluidos = [
+                d for d in (df_backlog_ativo, df_filtrado_ativo)
+                if d is not None and not d.empty and 'data_criacao' in d.columns
+            ]
+            dict_criados_diario = {}
+            if _partes_incluidos:
+                _df_incluidos = pd.concat(_partes_incluidos, ignore_index=True)
+                if 'issue_key' in _df_incluidos.columns:
+                    _df_incluidos = _df_incluidos.drop_duplicates(subset=['issue_key'])
+                dict_criados_diario = (
+                    pd.to_datetime(_df_incluidos['data_criacao'], errors='coerce').dropna().dt.date
+                    .value_counts().to_dict()
+                )
+            if usar_fila_real:
+                # Com a fila real, "Incluídos" = itens que ENTRARAM na fila no dia (mesma lista do expander).
+                dict_criados_diario = {data_ini + timedelta(days=o): len(e) for o, e in entradas_fila_dia.items()}
 
             for i, dia in enumerate(dias_sprint):
                 ideal_restante = tickets_iniciais - (passo_ideal * i)
-                tem_novo_dado = (dia == hoje) or (dia in dict_real_diario)
-                if dia == hoje: ultimo_valor_conhecido = total_atual_pendentes
+                # total_atual_pendentes só é None no ciclo total sem contagem pós-desenvolvimento.
+                if dia == hoje and total_atual_pendentes is not None: ultimo_valor_conhecido = total_atual_pendentes
                 elif dia in dict_real_diario: ultimo_valor_conhecido = dict_real_diario[dia]
                 concluidos_hoje = dict_concluidos_diario.get(dia, 0)
                 if dia <= hoje: total_concluidos_acumulado += concluidos_hoje
 
-                # itens_incluidos = quanto o "Trabalho Restante" mudou entre dois pontos reais,
-                # somado de volta o que foi concluído no meio -> reconstrói quanto escopo novo entrou.
-                # Ex.: restante ficou igual mesmo com 5 concluídos -> 5 itens novos entraram no lugar.
-                itens_incluidos_dia = None
-                if dia <= hoje and tem_novo_dado:
-                    if ultimo_valor_real is not None:
-                        delta_bruto = (ultimo_valor_conhecido - ultimo_valor_real) + concluidos_hoje
-                        itens_incluidos_dia = max(0, round(delta_bruto))
-                    ultimo_valor_real = ultimo_valor_conhecido
+                itens_incluidos_dia = dict_criados_diario.get(dia, 0)
 
                 bd_dados.append({
                     "Data": dia.strftime("%d/%m"),
@@ -1663,21 +2048,153 @@ with aba_dashboard:
             else:
                 st.info("Sem dados suficientes para renderizar o gráfico de Burndown.")
             
-            with st.expander("Itens entregues por dia", expanded=False):
-                if not df_filtrado_ativo.empty:
-                    df_auditoria = df_filtrado_ativo.copy()
-                    df_auditoria['Data da Entrega'] = pd.to_datetime(df_auditoria['data_conclusao']).dt.strftime('%d/%m/%Y')
-                    df_auditoria = df_auditoria.sort_values('data_conclusao')
-                    df_auditoria['link'] = "https://ddsinfo.atlassian.net/browse/" + df_auditoria['issue_key']
-                    dias_com_entrega = ["Todos os Dias"] + df_auditoria['Data da Entrega'].unique().tolist()
-                    dia_selecionado = st.selectbox("Filtrar por dia específico:", dias_com_entrega)
-                    if dia_selecionado != "Todos os Dias": df_auditoria = df_auditoria[df_auditoria['Data da Entrega'] == dia_selecionado]
-                    st.dataframe(
-                        df_auditoria[['Data da Entrega', 'issue_key', 'resumo', 'responsavel', 'pontos', 'link']],
-                        use_container_width=True, hide_index=True,
-                        column_config={"Data da Entrega": "Data de Conclusão", "issue_key": "Chave", "resumo": st.column_config.TextColumn("Resumo", width="large"), "responsavel": "Dev", "pontos": st.column_config.NumberColumn("Pontos", format="%d"), "link": st.column_config.LinkColumn("Jira")}
+            # Ciclo total: resumo, dev e pontos vêm de DETAILS/BACKLOG pela chave.
+            df_itens_entregues = df_filtrado_ativo
+            if ciclo_total:
+                # (com filtro de pessoa o responsável já veio do merge acima; tira para não duplicar a coluna)
+                df_itens_entregues = df_concluidos_bd.drop(columns=['responsavel'], errors='ignore').copy()
+                if not df_itens_entregues.empty:
+                    _info_itens = (
+                        pd.concat([df_backlog, df_issues], ignore_index=True)[['issue_key', 'resumo', 'responsavel', 'pontos']]
+                        .drop_duplicates(subset=['issue_key'], keep='last')
                     )
-                else: st.info(f"Nenhum item de {visao_burndown} foi concluído nesta sprint ainda.")
+                    df_itens_entregues = df_itens_entregues.merge(_info_itens, on='issue_key', how='left')
+                    df_itens_entregues['pontos'] = pd.to_numeric(df_itens_entregues['pontos'], errors='coerce')
+                    df_itens_entregues['resumo'] = df_itens_entregues['resumo'].fillna("—")
+                    df_itens_entregues['responsavel'] = df_itens_entregues['responsavel'].fillna("—")
+
+            if quarentena_itens:
+                # Fila real: quem foi para 5.1.1 Em quarentena também conta como concluído no dia.
+                _info_q = (pd.concat([df_backlog, df_issues], ignore_index=True)[['issue_key', 'resumo', 'responsavel', 'pontos']]
+                           .drop_duplicates(subset=['issue_key'], keep='last'))
+                df_q = pd.DataFrame({'issue_key': [k for _, k in quarentena_itens],
+                                     'data_conclusao': [pd.Timestamp(d) for d, _ in quarentena_itens]}).merge(_info_q, on='issue_key', how='left')
+                df_q['resumo'] = "[Quarentena] " + df_q['resumo'].fillna("—").astype(str)
+                df_q['responsavel'] = df_q['responsavel'].fillna("—")
+                df_q['pontos'] = pd.to_numeric(df_q['pontos'], errors='coerce')
+                df_itens_entregues = pd.concat([df_itens_entregues, df_q], ignore_index=True)
+
+            # with st.expander("Itens entregues por dia", expanded=False):
+            #     if ciclo_total:
+            #         st.caption("Ciclo total: data de entrada em 6.0 Concluído.")
+            #     if quarentena_itens:
+            #         st.caption("Itens marcados [Quarentena]: foram para 5.1.1 Em quarentena, que conta como concluído.")
+            #     if not df_itens_entregues.empty:
+            #         df_auditoria = df_itens_entregues.copy()
+            #         df_auditoria['Data da Entrega'] = pd.to_datetime(df_auditoria['data_conclusao']).dt.strftime('%d/%m/%Y')
+            #         df_auditoria = df_auditoria.sort_values('data_conclusao')
+            #         df_auditoria['link'] = "https://ddsinfo.atlassian.net/browse/" + df_auditoria['issue_key']
+            #         dias_com_entrega = ["Todos os Dias"] + df_auditoria['Data da Entrega'].unique().tolist()
+            #         dia_selecionado = st.selectbox("Filtrar por dia específico:", dias_com_entrega)
+            #         if dia_selecionado != "Todos os Dias": df_auditoria = df_auditoria[df_auditoria['Data da Entrega'] == dia_selecionado]
+            #         st.dataframe(
+            #             df_auditoria[['Data da Entrega', 'issue_key', 'resumo', 'responsavel', 'pontos', 'link']],
+            #             use_container_width=True, hide_index=True,
+            #             column_config={"Data da Entrega": "Data de Conclusão", "issue_key": "Chave", "resumo": st.column_config.TextColumn("Resumo", width="large"), "responsavel": "Dev", "pontos": st.column_config.NumberColumn("Pontos", format="%d"), "link": st.column_config.LinkColumn("Jira")}
+            #         )
+            #     else: st.info(f"Nenhum item de {visao_burndown} foi concluído nesta sprint ainda.")
+
+            # Entradas e saídas da fila por dia (os mesmos itens das barras "Incluídos"), com o motivo.
+            if usar_fila_real:
+                with st.expander("Entradas e saídas da fila por dia", expanded=False):
+                    fim_ciclo_txt = "6.0 Concluído" if ciclo_total else "3.3 ou além"
+                    st.caption(
+                        "Entrada = o item passou a fazer parte da fila da sprint naquele dia (colocado na sprint, "
+                        "reprovado, reaberto, saiu de pendência...). Saída = deixou a fila (foi para "
+                        f"{fim_ciclo_txt}, tirado da sprint, dispensado...). Comparação entre o fim do dia anterior "
+                        "e o fim do dia."
+                    )
+                    _info_fila = (pd.concat([df_backlog, df_issues], ignore_index=True)[['issue_key', 'resumo']]
+                                  .drop_duplicates(subset=['issue_key'], keep='last'))
+                    _resumo_fila = dict(zip(_info_fila['issue_key'], _info_fila['resumo']))
+                    _estados_por_item = {k: g for k, g in df_fila_sp.groupby('issue_key')}
+
+                    def _estado_item(chave, t):
+                        g = _estados_por_item.get(chave)
+                        if g is None:
+                            return None
+                        linha = g[(g['valido_de'] <= t) & (g['valido_ate'].isna() | (g['valido_ate'] > t))]
+                        return None if linha.empty else linha.iloc[0]
+
+                    def _na_sprint(e):
+                        return e is not None and (e['em_sprint_ativa'] == 1 or
+                                                  (escopo_burndown != "Sprint Atual" and e['em_backlog2'] == 1))
+
+                    def _motivo(a, b, entrou):
+                        if entrou:
+                            if a is None: return "Criado / passou a ser acompanhado"
+                            if not _na_sprint(a) and _na_sprint(b):
+                                return "Puxado do Backlog 2" if a['em_backlog2'] == 1 else "Colocado na sprint"
+                            if a['status'] != b['status']: return f"Voltou para a fila: {a['status']} → {b['status']}"
+                            if a['responsavel'] != b['responsavel']: return f"Atribuído (antes: {a['responsavel']})"
+                            if a['tipo_item'] != b['tipo_item']: return f"Tipo: {a['tipo_item']} → {b['tipo_item']}"
+                            return "Entrou na fila"
+                        if b is None: return "Saiu do acompanhamento"
+                        if _na_sprint(a) and not _na_sprint(b):
+                            return "Movido para o Backlog 2" if b['em_backlog2'] == 1 else "Tirado da sprint"
+                        if a['status'] != b['status']: return f"{a['status']} → {b['status']}"
+                        if a['responsavel'] != b['responsavel']: return f"Reatribuído para {b['responsavel']}"
+                        if a['tipo_item'] != b['tipo_item']: return f"Tipo: {a['tipo_item']} → {b['tipo_item']}"
+                        return "Saiu da fila"
+
+                    movimentos = []
+                    for o in sorted(entradas_fila_dia):
+                        dia_o = data_ini + timedelta(days=o)
+                        t_ant = pd.Timestamp(data_ini) if o == 0 else pd.Timestamp(dia_o) - pd.Timedelta(seconds=1)
+                        t_dep = min(pd.Timestamp(dia_o) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1), agora_local)
+                        for chave, entrou in [(k, True) for k in entradas_fila_dia[o]] + [(k, False) for k in saidas_fila_dia[o]]:
+                            a, b = _estado_item(chave, t_ant), _estado_item(chave, t_dep)
+                            ref = b if entrou else a  # tipo/responsável/status de quando estava na fila
+                            movimentos.append({
+                                'Dia': dia_o.strftime('%d/%m'), '_ordem': o,
+                                'Movimento': 'Entrada' if entrou else 'Saída', 'issue_key': chave,
+                                'resumo': _resumo_fila.get(chave, "—"),
+                                'tipo_item': ref['tipo_item'] if ref is not None else "",
+                                'responsavel': ref['responsavel'] if ref is not None else "",
+                                'Motivo': _motivo(a, b, entrou),
+                            })
+                    df_mov = pd.DataFrame(movimentos)
+
+                    if df_mov.empty:
+                        st.info("Nenhuma entrada ou saída na fila neste recorte.")
+                    else:
+                        ent = df_mov[df_mov['Movimento'] == 'Entrada']
+                        k1, k2, k3, k4 = st.columns(4)
+                        k1.metric("Fila no início", len(_fila_em(fila_recorte, pd.Timestamp(data_ini))))
+                        k2.metric("Entradas na sprint", len(ent))
+                        k3.metric("Saídas na sprint", int((df_mov['Movimento'] == 'Saída').sum()))
+                        if not ent.empty:
+                            pico_f = ent.groupby('Dia').size().sort_values(ascending=False)
+                            k4.metric("Dia de maior entrada", pico_f.index[0], delta=f"{int(pico_f.iloc[0])} itens")
+
+                        cf1, cf2 = st.columns([1, 2])
+                        tipo_mov = cf1.radio("Mostrar:", ["Entradas", "Saídas", "Entradas e saídas"],
+                                             horizontal=True, key="radio_mov_fila")
+                        filtro_mov = {"Entradas": ["Entrada"], "Saídas": ["Saída"]}.get(tipo_mov, ["Entrada", "Saída"])
+                        df_ver = df_mov[df_mov['Movimento'].isin(filtro_mov)]
+                        qtd_dia_mov = df_ver.groupby('Dia').size().to_dict()
+                        dias_mov = df_ver.sort_values('_ordem')['Dia'].unique().tolist()
+                        dia_mov = cf2.selectbox(
+                            "Dia:", ["Todos os dias"] + dias_mov, key="select_dia_fila",
+                            format_func=lambda d: d if d == "Todos os dias" else f"{d} ({int(qtd_dia_mov[d])} itens)"
+                        )
+                        if dia_mov != "Todos os dias":
+                            df_ver = df_ver[df_ver['Dia'] == dia_mov]
+                        df_ver = df_ver.sort_values(['_ordem', 'Movimento', 'issue_key']).copy()
+                        df_ver['link'] = "https://ddsinfo.atlassian.net/browse/" + df_ver['issue_key'].astype(str)
+                        st.dataframe(
+                            df_ver[['Dia', 'Movimento', 'issue_key', 'resumo', 'tipo_item', 'responsavel', 'Motivo', 'link']],
+                            use_container_width=True, hide_index=True,
+                            column_config={
+                                'Dia': st.column_config.TextColumn('Dia', width='small'),
+                                'issue_key': 'Chave',
+                                'resumo': st.column_config.TextColumn('Resumo', width='large'),
+                                'tipo_item': 'Tipo',
+                                'responsavel': 'Responsável',
+                                'Motivo': st.column_config.TextColumn('Motivo', width='medium'),
+                                'link': st.column_config.LinkColumn('Jira'),
+                            }
+                        )
 
             # ========================================================
             # CHEGADA DE ITENS POR DIA (por que a curva não desce)
@@ -1685,93 +2202,96 @@ with aba_dashboard:
             # As barras "Incluídos Diários" dizem QUANTO entrou, mas são derivadas do delta do
             # Trabalho Restante -- não sabem QUAIS itens entraram. Aqui a leitura é direta:
             # agrupa pelo campo data_criacao dos itens que estão no escopo da sprint.
-            with st.expander("Chegada de itens por dia", expanded=False):
-                _partes_escopo = [
-                    d for d in (df_backlog_ativo, df_filtrado_ativo)
-                    if d is not None and not d.empty and 'data_criacao' in d.columns
-                ]
+            # Sem a fila real: cálculo anterior, pela data de criação dos itens.
+            if not usar_fila_real:
+                with st.expander("Chegada de itens por dia", expanded=False):
+                    _partes_escopo = [
+                        d for d in (df_backlog_ativo, df_filtrado_ativo)
+                        if d is not None and not d.empty and 'data_criacao' in d.columns
+                    ]
 
-                if not _partes_escopo:
-                    st.info("Sem data de criação registrada nos itens desta visão.")
-                else:
-                    df_chegada = pd.concat(_partes_escopo, ignore_index=True)
-                    # Item pode aparecer nas duas metades (pendente e entregue) em recargas
-                    # parciais; sem isso o mesmo ticket contaria duas vezes no dia.
-                    if 'issue_key' in df_chegada.columns:
-                        df_chegada = df_chegada.drop_duplicates(subset=['issue_key'])
-
-                    df_chegada['_criacao'] = pd.to_datetime(df_chegada['data_criacao'], errors='coerce')
-                    df_chegada = df_chegada.dropna(subset=['_criacao'])
-                    df_chegada['_criacao'] = df_chegada['_criacao'].dt.date
-
-                    _ini_ch, _fim_ch = data_ini, data_fim
-                    dentro_janela = (df_chegada['_criacao'] >= _ini_ch) & (df_chegada['_criacao'] <= _fim_ch)
-                    df_novos = df_chegada[dentro_janela].copy()
-                    qtd_herdados = int((~dentro_janela).sum())
-
-                    if df_novos.empty:
-                        st.info(
-                            f"Nenhum item criado dentro da sprint nesta visão. "
-                            f"Os {qtd_herdados} itens do escopo são anteriores ao início."
-                        )
+                    if not _partes_escopo:
+                        st.info("Sem data de criação registrada nos itens desta visão.")
                     else:
-                        df_por_dia = (
-                            df_novos.groupby('_criacao')
-                            .agg(Itens=('issue_key', 'count'))
-                            .reset_index()
-                            .rename(columns={'_criacao': 'Data'})
-                            .sort_values('Data')
-                        )
-                        df_por_dia['Dia'] = pd.to_datetime(df_por_dia['Data']).dt.strftime('%d/%m')
-                        pico = df_por_dia.loc[df_por_dia['Itens'].idxmax()]
-                        media_dia = df_por_dia['Itens'].mean()
+                        df_chegada = pd.concat(_partes_escopo, ignore_index=True)
+                        # Item pode aparecer nas duas metades (pendente e entregue) em recargas
+                        # parciais; sem isso o mesmo ticket contaria duas vezes no dia.
+                        if 'issue_key' in df_chegada.columns:
+                            df_chegada = df_chegada.drop_duplicates(subset=['issue_key'])
 
-                        k1, k2, k3, k4 = st.columns(4)
-                        k1.metric("Itens Criados na Sprint", int(df_por_dia['Itens'].sum()))
-                        k2.metric("Dia de Maior Entrada", f"{pico['Dia']}", delta=f"{int(pico['Itens'])} itens")
-                        k3.metric("Média por Dia de Entrada", f"{media_dia:.1f}")
-                        k4.metric("Herdados (criados antes)", qtd_herdados)
+                        df_chegada['_criacao'] = pd.to_datetime(df_chegada['data_criacao'], errors='coerce')
+                        df_chegada = df_chegada.dropna(subset=['_criacao'])
+                        df_chegada['_criacao'] = df_chegada['_criacao'].dt.date
 
-                        st.divider()
+                        _ini_ch, _fim_ch = data_ini, data_fim
+                        dentro_janela = (df_chegada['_criacao'] >= _ini_ch) & (df_chegada['_criacao'] <= _fim_ch)
+                        df_novos = df_chegada[dentro_janela].copy()
+                        qtd_herdados = int((~dentro_janela).sum())
 
-                        st.write("**Quais itens chegaram**")
-                        # Opções ordenadas do dia que mais recebeu para o que menos recebeu, com a
-                        # contagem no rótulo -- é o que restou do ranking depois de tirar a tabela.
-                        df_rank_dias = df_por_dia.sort_values('Itens', ascending=False)
-                        opcoes_dias = ["Todos os dias"] + [
-                            f"{d} ({int(q)} itens)" for d, q in zip(df_rank_dias['Dia'], df_rank_dias['Itens'])
-                        ]
-                        dia_escolhido = st.selectbox(
-                            "Dia de criação:", opcoes_dias, key="select_dia_chegada"
-                        )
+                        if df_novos.empty:
+                            st.info(
+                                f"Nenhum item criado dentro da sprint nesta visão. "
+                                f"Os {qtd_herdados} itens do escopo são anteriores ao início."
+                            )
+                        else:
+                            df_por_dia = (
+                                df_novos.groupby('_criacao')
+                                .agg(Itens=('issue_key', 'count'))
+                                .reset_index()
+                                .rename(columns={'_criacao': 'Data'})
+                                .sort_values('Data')
+                            )
+                            df_por_dia['Dia'] = pd.to_datetime(df_por_dia['Data']).dt.strftime('%d/%m')
+                            pico = df_por_dia.loc[df_por_dia['Itens'].idxmax()]
+                            media_dia = df_por_dia['Itens'].mean()
 
-                        df_detalhe_ch = df_novos.copy()
-                        df_detalhe_ch['Dia'] = pd.to_datetime(df_detalhe_ch['_criacao']).dt.strftime('%d/%m')
-                        if dia_escolhido != "Todos os dias":
-                            df_detalhe_ch = df_detalhe_ch[df_detalhe_ch['Dia'] == dia_escolhido.split(' (')[0]]
+                            k1, k2, k3, k4 = st.columns(4)
+                            k1.metric("Itens Criados na Sprint", int(df_por_dia['Itens'].sum()))
+                            k2.metric("Dia de Maior Entrada", f"{pico['Dia']}", delta=f"{int(pico['Itens'])} itens")
+                            k3.metric("Média por Dia de Entrada", f"{media_dia:.1f}")
+                            k4.metric("Herdados (criados antes)", qtd_herdados)
 
-                        for _col_opc in ('cliente', 'tipo_item', 'status', 'responsavel', 'pontos'):
-                            if _col_opc not in df_detalhe_ch.columns:
-                                df_detalhe_ch[_col_opc] = ""
+                            st.divider()
 
-                        df_detalhe_ch['link'] = "https://ddsinfo.atlassian.net/browse/" + df_detalhe_ch['issue_key'].astype(str)
-                        df_detalhe_ch = df_detalhe_ch.sort_values(['_criacao', 'issue_key'])
+                            st.write("**Quais itens chegaram**")
+                            # Opções ordenadas do dia que mais recebeu para o que menos recebeu, com a
+                            # contagem no rótulo -- é o que restou do ranking depois de tirar a tabela.
+                            df_rank_dias = df_por_dia.sort_values('Itens', ascending=False)
+                            # Opção = só o dia (contagem no texto), para a seleção não se perder ao trocar filtros.
+                            qtd_por_dia = dict(zip(df_rank_dias['Dia'], df_rank_dias['Itens']))
+                            opcoes_dias = ["Todos os dias"] + df_rank_dias['Dia'].tolist()
+                            dia_escolhido = st.selectbox(
+                                "Dia de criação:", opcoes_dias, key="select_dia_chegada",
+                                format_func=lambda d: d if d == "Todos os dias" else f"{d} ({int(qtd_por_dia[d])} itens)"
+                            )
 
-                        st.dataframe(
-                            df_detalhe_ch[['Dia', 'issue_key', 'resumo', 'cliente', 'tipo_item', 'status', 'responsavel', 'pontos', 'link']],
-                            use_container_width=True, hide_index=True,
-                            column_config={
-                                'Dia': st.column_config.TextColumn('Criado em', width='small'),
-                                'issue_key': 'Chave',
-                                'resumo': st.column_config.TextColumn('Resumo', width='large'),
-                                'cliente': 'Cliente',
-                                'tipo_item': 'Tipo',
-                                'status': 'Status',
-                                'responsavel': 'Responsável',
-                                'pontos': st.column_config.NumberColumn('Pontos', format="%.1f"),
-                                'link': st.column_config.LinkColumn('Jira'),
-                            }
-                        )
+                            df_detalhe_ch = df_novos.copy()
+                            df_detalhe_ch['Dia'] = pd.to_datetime(df_detalhe_ch['_criacao']).dt.strftime('%d/%m')
+                            if dia_escolhido != "Todos os dias":
+                                df_detalhe_ch = df_detalhe_ch[df_detalhe_ch['Dia'] == dia_escolhido]
+
+                            for _col_opc in ('cliente', 'tipo_item', 'status', 'responsavel', 'pontos'):
+                                if _col_opc not in df_detalhe_ch.columns:
+                                    df_detalhe_ch[_col_opc] = ""
+
+                            df_detalhe_ch['link'] = "https://ddsinfo.atlassian.net/browse/" + df_detalhe_ch['issue_key'].astype(str)
+                            df_detalhe_ch = df_detalhe_ch.sort_values(['_criacao', 'issue_key'])
+
+                            st.dataframe(
+                                df_detalhe_ch[['Dia', 'issue_key', 'resumo', 'cliente', 'tipo_item', 'status', 'responsavel', 'pontos', 'link']],
+                                use_container_width=True, hide_index=True,
+                                column_config={
+                                    'Dia': st.column_config.TextColumn('Criado em', width='small'),
+                                    'issue_key': 'Chave',
+                                    'resumo': st.column_config.TextColumn('Resumo', width='large'),
+                                    'cliente': 'Cliente',
+                                    'tipo_item': 'Tipo',
+                                    'status': 'Status',
+                                    'responsavel': 'Responsável',
+                                    'pontos': st.column_config.NumberColumn('Pontos', format="%.1f"),
+                                    'link': st.column_config.LinkColumn('Jira'),
+                                }
+                            )
 
         else: st.info("Sem dados suficientes para gerar o Burndown.")
         st.divider()
@@ -1809,7 +2329,6 @@ with aba_dashboard:
         df_todas_issues = pd.concat([df_issues_all, df_backlog_all], ignore_index=True)
 
         df_rns = pd.DataFrame()
-        df_concluidos = pd.DataFrame()
 
         # Janela da sprint: o vínculo por sprint_id sozinho traz RN arrastado de sprints anteriores
         # (item que continua no board). Aqui só interessa o RN *gerado* dentro do intervalo da sprint.
@@ -1833,20 +2352,84 @@ with aba_dashboard:
             dentro = criacao.isna() | ((criacao >= rn_dt_ini) & (criacao <= rn_dt_fim))
             return df[dentro].copy()
 
+        QTD_SPRINTS_TENDENCIA_RN = 5
+
+        def _apurar_rn_sprint(sp_id, dt_ini, dt_fim):
+            # Densidade de RN = RNs criados na sprint / customizações concluídas na sprint.
+            # Numerador com todos os RNs: a origem (tipo do item pai) só é conhecida em parte deles.
+            iss_sp = df_issues[df_issues['sprint_id'] == sp_id]
+            tod_sp = pd.concat([iss_sp, df_backlog[df_backlog['sprint_id'] == sp_id]], ignore_index=True)
+            if tod_sp.empty:
+                return 0, 0
+            tipo_tod = tod_sp['tipo_item'].astype(str).str.lower().str.strip()
+            rns_sp = tod_sp[tipo_tod.str.contains('retorno negativo', na=False)]
+            if dt_ini is not None and not rns_sp.empty and 'data_criacao' in rns_sp.columns:
+                criacao = pd.to_datetime(rns_sp['data_criacao'], errors='coerce')
+                rns_sp = rns_sp[criacao.isna() | ((criacao >= dt_ini) & (criacao <= dt_fim))]
+            tipo_iss = iss_sp['tipo_item'].astype(str).str.lower().str.strip()
+            cust_sp = iss_sp[(iss_sp['status'] == '6.0 Concluído') & tipo_iss.str.startswith('customiza')]
+            return len(rns_sp), len(cust_sp)
+
         if not df_todas_issues.empty:
             df_todas_issues['tipo_norm'] = df_todas_issues['tipo_item'].astype(str).str.lower().str.strip()
             df_rns = df_todas_issues[df_todas_issues['tipo_norm'].str.contains('retorno negativo', na=False)].copy()
             df_rns = _filtrar_criados_na_sprint(df_rns)
 
-            df_concluidos = df_issues_all[df_issues_all['status'] == '6.0 Concluído']
+            qtd_rns, qtd_cust = _apurar_rn_sprint(id_sprint_selecionada, rn_dt_ini, rn_dt_fim)
+            taxa = (qtd_rns / qtd_cust * 100) if qtd_cust > 0 else 0
 
-            c1, c2, c3 = st.columns(3)
-            c1.metric("RNs Gerados", len(df_rns))
-            c2.metric("Itens Concluídos", len(df_concluidos))
-            taxa = (len(df_rns) / len(df_concluidos) * 100) if len(df_concluidos) > 0 else 0
-            c3.metric("Densidade de Falha", f"{taxa:.1f}%")
+            # Sprints anteriores (df_sprints vem ordenado por data de início, da mais nova para a mais antiga)
+            historico_rn = []
+            _idx_sprint_rn = df_sprints.index[df_sprints['id'] == id_sprint_selecionada].tolist()
+            if _idx_sprint_rn:
+                _pos = df_sprints.index.get_loc(_idx_sprint_rn[0])
+                for _, sp_row in df_sprints.iloc[_pos: _pos + 1 + QTD_SPRINTS_TENDENCIA_RN].iterrows():
+                    _di = pd.to_datetime(sp_row['data_inicio'], errors='coerce')
+                    _df = pd.to_datetime(sp_row['data_fim'], errors='coerce')
+                    if pd.isna(_di) or pd.isna(_df):
+                        _di = _df = None
+                    _r, _c = _apurar_rn_sprint(sp_row['id'], _di, _df)
+                    historico_rn.append({
+                        'Sprint': sp_row['descricao'], 'inicio': sp_row['data_inicio'],
+                        'RNs': _r, 'Customizações': _c,
+                        'Densidade': round(_r / _c * 100, 1) if _c > 0 else None,
+                        'Atual': sp_row['id'] == id_sprint_selecionada,
+                    })
+            df_hist_rn = pd.DataFrame(historico_rn)
+            df_hist_ant = df_hist_rn[~df_hist_rn['Atual']] if not df_hist_rn.empty else pd.DataFrame()
 
-            
+            taxa_anterior = df_hist_ant['Densidade'].iloc[0] if not df_hist_ant.empty else None
+            delta_taxa = f"{taxa - taxa_anterior:+.1f} % vs sprint anterior" if taxa_anterior is not None and pd.notnull(taxa_anterior) else None
+
+            rns_abertos = int((df_rns['status'] != '6.0 Concluído').sum()) if not df_rns.empty else 0
+
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("RNs Gerados", qtd_rns)
+            c2.metric("Customizações Concluídas", qtd_cust)
+            c3.metric("Densidade de RN", f"{taxa:.1f}%", delta_taxa, delta_color="inverse",
+                      help="RNs gerados na sprint / customizações concluídas (6.0 Concluído) na sprint.")
+            c4.metric("RNs em Aberto", rns_abertos,
+                      help="RNs da sprint ainda fora do status 6.0 Concluído (retrabalho pendente).")
+
+            with st.expander("Tendência da Densidade de RN", expanded=False):
+                df_graf_rn = df_hist_rn.dropna(subset=['Densidade']) if not df_hist_rn.empty else pd.DataFrame()
+                if df_graf_rn.empty:
+                    st.info("Sem customizações concluídas nas sprints do período para calcular a tendência.")
+                else:
+                    df_graf_rn = df_graf_rn.sort_values('inicio')
+                    ordem_sprints_rn = df_graf_rn['Sprint'].tolist()
+                    linha_rn = alt.Chart(df_graf_rn).mark_line(point=True, color='#3CD6E7').encode(
+                        x=alt.X('Sprint:N', sort=ordem_sprints_rn, title=''),
+                        y=alt.Y('Densidade:Q', title='Densidade de RN (%)',
+                                scale=alt.Scale(domain=[0, max(20, float(df_graf_rn['Densidade'].max()) * 1.2)])),
+                        tooltip=['Sprint', 'RNs', 'Customizações', alt.Tooltip('Densidade:Q', format='.1f', title='Densidade (%)')]
+                    )
+                    rotulos_linha_rn = linha_rn.mark_text(dy=-10, color='white').encode(text=alt.Text('Densidade:Q', format='.1f'))
+                    st.altair_chart((linha_rn + rotulos_linha_rn).properties(height=300),
+                                    use_container_width=True, theme="streamlit")
+                    st.caption("Base: somente customizações concluídas. A sprint selecionada ainda pode estar em andamento.")
+
+
         if not df_rns.empty:
             st.write("---")
 
@@ -2027,7 +2610,10 @@ with aba_dashboard:
                             df_detalhe_cliente = df_clientes_sprint.copy()
 
                         df_detalhe_cliente['link'] = "https://ddsinfo.atlassian.net/browse/" + df_detalhe_cliente['issue_key']
-                        
+                    else:
+                        # Sem item criado na sprint não há o que detalhar.
+                        df_detalhe_cliente = pd.DataFrame(columns=['issue_key', 'sistema', 'resumo', 'status', 'tipo_item', 'responsavel'])
+
                     df_detalhe_cliente.columns = df_detalhe_cliente.columns.str.lower()
                     if 'status' not in df_detalhe_cliente.columns:
                         df_detalhe_cliente['status'] = 'aguardando sincronizacao'
@@ -2052,68 +2638,83 @@ with aba_dashboard:
             # ========================================================
             # NOVO PAINEL: ALERTAS DE PRAZO (DATA LIMITE)
             # ========================================================
-            st.markdown("####  Alertas de Prazo (Data Limite)")
-            df_alertas = df_backlog_filtrado.copy()
-            df_alertas['data_limite'] = pd.to_datetime(df_alertas['data_limite'])
-            hoje_ts = pd.Timestamp(datetime.now().date())
+            # Alertas de Prazo desativado (pedido da gestão). Mantido comentado caso volte.
+            # st.markdown("####  Alertas de Prazo (Data Limite)")
+            # df_alertas = df_backlog_filtrado.copy()
+            # df_alertas['data_limite'] = pd.to_datetime(df_alertas['data_limite'])
+            # hoje_ts = pd.Timestamp(datetime.now().date())
 
-            def definir_status_prazo(row):
-                if pd.isnull(row['data_limite']): return "⚪ Sem Prazo"
-                elif row['data_limite'].date() < hoje_ts.date(): return "🔴 Excedido"
-                elif (row['data_limite'].date() - hoje_ts.date()).days <= 3: return "🟡 Próximo (Até 3 dias)"
-                else: return "🟢 No Prazo"
+            # def definir_status_prazo(row):
+            #     if pd.isnull(row['data_limite']): return "⚪ Sem Prazo"
+            #     elif row['data_limite'].date() < hoje_ts.date(): return "🔴 Excedido"
+            #     elif (row['data_limite'].date() - hoje_ts.date()).days <= 3: return "🟡 Próximo (Até 3 dias)"
+            #     else: return "🟢 No Prazo"
 
-            df_alertas['Alerta'] = df_alertas.apply(definir_status_prazo, axis=1)
-            df_critico = df_alertas[df_alertas['Alerta'].isin(["🔴 Excedido", "🟡 Próximo (Até 3 dias)"])].copy()
+            # df_alertas['Alerta'] = df_alertas.apply(definir_status_prazo, axis=1)
+            # df_critico = df_alertas[df_alertas['Alerta'].isin(["🔴 Excedido", "🟡 Próximo (Até 3 dias)"])].copy()
 
-            if not df_critico.empty:
-                df_critico['Prazo'] = df_critico['data_limite'].dt.strftime('%d/%m/%Y')
+            # if not df_critico.empty:
+            #     df_critico['Prazo'] = df_critico['data_limite'].dt.strftime('%d/%m/%Y')
                 
-                df_critico['link'] = "https://ddsinfo.atlassian.net/browse/" + df_critico['issue_key']
+            #     df_critico['link'] = "https://ddsinfo.atlassian.net/browse/" + df_critico['issue_key']
                 
-                st.dataframe(
-                    df_critico[['Alerta', 'link', 'cliente', 'resumo', 'responsavel', 'Prazo']],
-                    use_container_width=True, hide_index=True,
-                    column_config={
-                        "Alerta": st.column_config.TextColumn("Status", width="small"),
+            #     st.dataframe(
+            #         df_critico[['Alerta', 'link', 'cliente', 'resumo', 'responsavel', 'Prazo']],
+            #         use_container_width=True, hide_index=True,
+            #         column_config={
+            #             "Alerta": st.column_config.TextColumn("Status", width="small"),
                         
-                        "link": st.column_config.LinkColumn(
-                            "Chave", 
-                            display_text="https://ddsinfo.atlassian.net/browse/(.*)"
-                        ),
+            #             "link": st.column_config.LinkColumn(
+            #                 "Chave", 
+            #                 display_text="https://ddsinfo.atlassian.net/browse/(.*)"
+            #             ),
                         
-                        "cliente": "Cliente",
-                        "resumo": "Tarefa",
-                        "responsavel": "Responsável",
-                        "Prazo": st.column_config.TextColumn("Data Limite", width="small")
-                    }
-                )
-            else:
-                st.success("✅ Nenhum item pendente com prazo excedido ou próximo do limite.")
+            #             "cliente": "Cliente",
+            #             "resumo": "Tarefa",
+            #             "responsavel": "Responsável",
+            #             "Prazo": st.column_config.TextColumn("Data Limite", width="small")
+            #         }
+            #     )
+            # else:
+            #     st.success("✅ Nenhum item pendente com prazo excedido ou próximo do limite.")
 
             st.divider()
             st.subheader(" Itens por Sistema")
 
-            frames = []
-            if not df_backlog_filtrado.empty: frames.append(df_backlog_filtrado)
-            if not df_filtrado.empty: frames.append(df_filtrado)
+            # Mesmo padrão do "Itens por Tipo".
+            visao_sistema = st.radio(
+                "Visão:", ["Geral", "Sprint de Desenvolvimento", "Sprint Backlog 2"],
+                horizontal=True, key="radio_visao_sistema"
+            )
+            filtro_nativa_sistema = {"Sprint de Desenvolvimento": "SIM", "Sprint Backlog 2": "NAO"}.get(visao_sistema)
+            if filtro_nativa_sistema and 'sprint_nativa' in df_backlog_filtrado.columns:
+                df_sistemas_sprint = df_backlog_filtrado[df_backlog_filtrado['sprint_nativa'] == filtro_nativa_sistema].copy()
+            else:
+                df_sistemas_sprint = df_backlog_filtrado.copy()
 
-            if frames:
-                df_sistemas_sprint = pd.concat(frames, ignore_index=True)
-                
+            # Vazio/None/nan viram "Sem Sistema", o mesmo rótulo que a extração grava.
+            def _normalizar_sistema(valor):
+                if pd.isna(valor) or str(valor).strip() in ["", "None", "nan", "Não preenchido"]:
+                    return "Sem Sistema"
+                return str(valor).strip()
+
+            if not df_sistemas_sprint.empty:
+
                 if 'sistema' in df_sistemas_sprint.columns:
-                    df_sistemas_sprint['sistema'] = df_sistemas_sprint['sistema'].fillna("Não preenchido")
-                    df_sistemas_sprint['sistema'] = df_sistemas_sprint['sistema'].apply(lambda x: "Não preenchido" if str(x).strip() in ["", "None", "nan"] else x)
-                    
+                    df_sistemas_sprint['sistema'] = df_sistemas_sprint['sistema'].apply(_normalizar_sistema)
+
                     df_grafico_sistema = df_sistemas_sprint.groupby('sistema').size().reset_index(name='quantidade')
                     df_grafico_sistema = df_grafico_sistema.sort_values(by='quantidade', ascending=False)
-                    
+                    # Domínio fixo com todos os sistemas do backlog: cada sistema mantém a mesma cor ao trocar de visão.
+                    dominio_cores_sistema = sorted(df_backlog_filtrado['sistema'].apply(_normalizar_sistema).unique().tolist())
+
                     col_sys1, col_sys2 = st.columns([2, 3])
-                    
+
                     with col_sys1:
                         base_pizza = alt.Chart(df_grafico_sistema).encode(
                             theta=alt.Theta("quantidade:Q", stack=True),
-                            color=alt.Color("sistema:N", title="Sistema", scale=alt.Scale(scheme="category20"))
+                            color=alt.Color("sistema:N", title="Sistema", scale=alt.Scale(scheme="category20", domain=dominio_cores_sistema)),
+                            tooltip=[alt.Tooltip("sistema:N", title="Sistema"), alt.Tooltip("quantidade:Q", title="Itens")]
                         )
                         pizza = base_pizza.mark_arc(outerRadius=120)
                         textos = base_pizza.mark_text(radius=145, size=15, color="white").encode(text="quantidade:Q")
@@ -2141,136 +2742,393 @@ with aba_dashboard:
                                 ),
                             }
                         )
+
+                    with st.expander(f"Detalhes dos itens por sistema ({visao_sistema})", expanded=False):
+                        opcoes_sistema = ["Todos"] + df_grafico_sistema['sistema'].tolist()
+                        sistema_selecionado = st.selectbox("Filtrar por sistema:", opcoes_sistema, key="select_detalhe_sistema")
+
+                        df_detalhe_sistema = df_sistemas_sprint.copy()
+                        if sistema_selecionado != "Todos":
+                            df_detalhe_sistema = df_detalhe_sistema[df_detalhe_sistema['sistema'] == sistema_selecionado]
+
+                        df_detalhe_sistema['sprint'] = df_detalhe_sistema['sprint_nativa'].map(
+                            {"SIM": "Desenvolvimento", "NAO": "Backlog 2"}
+                        ) if 'sprint_nativa' in df_detalhe_sistema.columns else ""
+                        df_detalhe_sistema['tipo'] = df_detalhe_sistema['tipo_item'].fillna("sem tipo").astype(str).str.strip().str.capitalize()
+                        df_detalhe_sistema['link'] = "https://ddsinfo.atlassian.net/browse/" + df_detalhe_sistema['issue_key'].astype(str)
+                        df_detalhe_sistema = df_detalhe_sistema.sort_values(['sistema', 'issue_key'])
+
+                        st.caption(f"{len(df_detalhe_sistema)} item(ns)")
+                        st.dataframe(
+                            df_detalhe_sistema[['issue_key', 'sistema', 'tipo', 'sprint', 'resumo', 'status', 'responsavel', 'cliente', 'link']],
+                            use_container_width=True, hide_index=True,
+                            column_config={
+                                "issue_key": "Chave",
+                                "sistema": "Sistema",
+                                "tipo": "Tipo",
+                                "sprint": "Sprint",
+                                "resumo": st.column_config.TextColumn("Resumo", width="large"),
+                                "status": "Status",
+                                "responsavel": "Responsável",
+                                "cliente": "Cliente",
+                                "link": st.column_config.LinkColumn("Jira")
+                            }
+                        )
                 else:
                     st.warning("Coluna 'sistema' não disponível para montar o gráfico.")
             else:
-                st.info("Nenhum dado encontrado para analisar os sistemas.")
+                st.info("Nenhum item pendente para esta visão.")
 
             st.divider()
-            
-            st.subheader("Comparativo de Fluxo (Status)")
-        st.markdown("<p style='font-size: 0.9em; color: gray; margin-top:-10px;'>🔵 <b>Sprint Atual</b>.</p>", unsafe_allow_html=True)
-        st.markdown("<p style='font-size: 0.9em; color: gray; margin-top:-10px;'>🟠 <b>Sprint Anterior</b>.</p>", unsafe_allow_html=True)
+            st.subheader(" Itens por Tipo")
 
-        frames_status = []
-        if not df_backlog_filtrado.empty: frames_status.append(df_backlog_filtrado)
-        if not df_filtrado.empty: frames_status.append(df_filtrado)
+            # Pendentes da sincronização atual: Geral = SIM+NAO, Desenvolvimento = SIM, Backlog 2 = NAO (1218).
+            visao_tipo = st.radio(
+                "Visão:", ["Geral", "Sprint de Desenvolvimento", "Sprint Backlog 2"],
+                horizontal=True, key="radio_visao_tipo"
+            )
+            filtro_nativa_tipo = {"Sprint de Desenvolvimento": "SIM", "Sprint Backlog 2": "NAO"}.get(visao_tipo)
+            if filtro_nativa_tipo and 'sprint_nativa' in df_backlog_filtrado.columns:
+                df_tipos = df_backlog_filtrado[df_backlog_filtrado['sprint_nativa'] == filtro_nativa_tipo].copy()
+            else:
+                df_tipos = df_backlog_filtrado.copy()
 
-        if frames_status:
-            df_status_sprint = pd.concat(frames_status, ignore_index=True)
-            
-            if 'status' in df_status_sprint.columns:
-                df_status_sprint['status'] = df_status_sprint['status'].fillna("Desconhecido")
-                df_status_sprint = df_status_sprint[df_status_sprint['status'] != '6.0 Concluído']
-                
-                df_atual = df_status_sprint.groupby('status').size().reset_index(name='Sprint Atual')
-                df_atual = df_atual.sort_values(by='status', ascending=True)
+            if df_tipos.empty:
+                st.info("Nenhum item pendente para esta visão.")
+            else:
+                df_tipos['tipo'] = df_tipos['tipo_item'].fillna("sem tipo").astype(str).str.strip().str.lower()
 
-                df_anterior = pd.DataFrame(columns=['status', 'Sprint Anterior'])
-                try:
-                    idx_atual = df_sprints.index[df_sprints['nome_exibicao'] == sprint_selecionada].tolist()[0]
-                    if idx_atual + 1 < len(df_sprints):
-                        id_sprint_anterior = df_sprints.iloc[idx_atual + 1]['id']
-                        query_ant = f"SELECT STATUS FROM TB_SPRINT_BACKLOG WHERE ID_SPRINT = {id_sprint_anterior} AND STATUS != '6.0 Concluído'"
-                        df_dados_ant = conn.query(query_ant)
-                        
-                        if not df_dados_ant.empty:
-                            df_dados_ant['STATUS'] = df_dados_ant['STATUS'].fillna("Desconhecido")
-                            df_anterior = df_dados_ant.groupby('STATUS').size().reset_index(name='Sprint Anterior')
-                            df_anterior.rename(columns={'STATUS': 'status'}, inplace=True)
-                except Exception as e:
-                    pass
-                
-                df_comparativo = pd.merge(df_atual, df_anterior, on='status', how='outer').fillna(0)
-                df_comparativo['Sprint Atual'] = df_comparativo['Sprint Atual'].astype(int)
-                df_comparativo['Sprint Anterior'] = df_comparativo['Sprint Anterior'].astype(int)
-                df_comparativo['Diferença'] = df_comparativo['Sprint Atual'] - df_comparativo['Sprint Anterior']
-                df_comparativo = df_comparativo.sort_values(by='status', ascending=True)
-                
-                col_st1, col_st2 = st.columns([3, 3])
-                
-                with col_st1:
-                    st.markdown("**Comparativo Visual (Atual vs Anterior)**")
-                    df_melted = df_comparativo[['status', 'Sprint Atual', 'Sprint Anterior']].melt(id_vars='status', var_name='Sprint', value_name='Qtd')
-                    altura_status = max(320, len(df_comparativo) * 35)
+                df_grafico_tipo = df_tipos.groupby('tipo').size().reset_index(name='quantidade')
+                df_grafico_tipo = df_grafico_tipo.sort_values(by='quantidade', ascending=False)
+                df_grafico_tipo['tipo'] = df_grafico_tipo['tipo'].str.capitalize()
+                dominio_cores_tipo = sorted(
+                    df_backlog_filtrado['tipo_item'].fillna("sem tipo").astype(str).str.strip().str.lower().str.capitalize().unique().tolist()
+                )
 
-                    barras_status = alt.Chart(df_melted).mark_bar(cornerRadiusEnd=2).encode(
-                        y=alt.Y('status:N', sort='ascending', title='', axis=alt.Axis(labelLimit=200)),
-                        x=alt.X('Qtd:Q', title='Quantidade de Itens', axis=alt.Axis(grid=False)),
-                        color=alt.Color('Sprint:N', scale=alt.Scale(domain=['Sprint Atual', 'Sprint Anterior'], range=['#4CA6FF', '#FF9F43']), legend=alt.Legend(orient='bottom', title=None)),
-                        yOffset='Sprint:N',
-                        tooltip=['status', 'Sprint', 'Qtd']
-                    ).properties(height=altura_status)
-                    
-                    st.altair_chart(barras_status, use_container_width=True, theme="streamlit")
-                    
-                with col_st2:
-                    st.markdown("**Tabela de Variação**")
-                    st.markdown("<p style='font-size: 0.85em; color: gray; margin-top:-10px;'>Evolução de volume retido em cada fase.</p>", unsafe_allow_html=True)
-                    
-                    df_tabela = df_comparativo.copy()
-                    total_atual = df_tabela['Sprint Atual'].sum()
-                    df_tabela['% Atual'] = (df_tabela['Sprint Atual'] / total_atual) * 100 if total_atual > 0 else 0
-                    
-                    def formatar_delta(valor):
-                        if valor > 0:
-                            return f"🟢 +{int(valor)}"
-                        elif valor < 0:
-                            return f"🔴 {int(valor)}"
-                        else:
-                            return "⚪ 0"
-                            
-                    df_tabela['Variação'] = df_tabela['Diferença'].apply(formatar_delta)
-                    
-                    st.dataframe(
-                        df_tabela[['status', 'Sprint Anterior', 'Sprint Atual', 'Variação', '% Atual']],
-                        use_container_width=True,
-                        hide_index=True,
-                        column_config={
-                            "status": st.column_config.TextColumn("Fase (Status)", width="medium"),
-                            "Sprint Anterior": st.column_config.NumberColumn("Anterior", width="small"),
-                            "Sprint Atual": st.column_config.NumberColumn("Atual", width="small"),
-                            "Variação": st.column_config.TextColumn("Variação", width="small"),
-                            "% Atual": st.column_config.ProgressColumn("% Atual", format="%d%%", min_value=0, max_value=100)
-                        }
+                # Customização por prefixo (com ou sem acento).
+                df_comparativo_tipo = pd.DataFrame({
+                    'Tipo': ['Erro', 'Atendimento', 'Customização', 'Ajuste'],
+                    'Quantidade': [
+                        int((df_tipos['tipo'] == 'erro').sum()),
+                        int((df_tipos['tipo'] == 'atendimento').sum()),
+                        int(df_tipos['tipo'].str.startswith('customiza').sum()),
+                        int((df_tipos['tipo'] == 'ajuste').sum()),
+                    ]
+                })
+
+                col_tipo1, col_tipo2 = st.columns(2)
+
+                with col_tipo1:
+                    st.write("**Distribuição por Tipo**")
+                    base_pizza_tipo = alt.Chart(df_grafico_tipo).encode(
+                        theta=alt.Theta("quantidade:Q", stack=True),
+                        # Domínio fixo com todos os tipos do backlog: cada tipo mantém a mesma cor ao trocar de visão.
+                        color=alt.Color("tipo:N", title="Tipo", scale=alt.Scale(scheme="category20", domain=dominio_cores_tipo)),
+                        tooltip=[alt.Tooltip("tipo:N", title="Tipo"), alt.Tooltip("quantidade:Q", title="Itens")]
                     )
-                
-                st.divider()
-                
-                
-                with st.expander("Detalhes dos Itens Atuais", expanded=False):
-                    df_auditoria_status = df_status_sprint.copy()
-                    df_auditoria_status['link'] = "https://ddsinfo.atlassian.net/browse/" + df_auditoria_status['issue_key']
-                    
-                    lista_de_status = ["Todos"] + sorted(df_auditoria_status['status'].unique().tolist())
-                    status_selecionado = st.selectbox("Filtrar lista por Status:", lista_de_status)
-                    
-                    if status_selecionado != "Todos":
-                        df_auditoria_status = df_auditoria_status[df_auditoria_status['status'] == status_selecionado]
-                    
+                    pizza_tipo = base_pizza_tipo.mark_arc(outerRadius=120)
+                    textos_tipo = base_pizza_tipo.mark_text(radius=145, size=15, color="white").encode(text="quantidade:Q")
+
+                    st.altair_chart((pizza_tipo + textos_tipo).properties(height=320), use_container_width=True, theme="streamlit")
+
+                with col_tipo2:
+                    st.write("**Erro x Atendimento x Customização x Ajuste**")
+                    barras_tipo = alt.Chart(df_comparativo_tipo).mark_bar(color='#4CA6FF').encode(
+                        x=alt.X('Quantidade:Q', title='Itens', axis=alt.Axis(grid=False, tickMinStep=1),
+                                scale=alt.Scale(domain=[0, max(1, int(df_comparativo_tipo['Quantidade'].max() * 1.15))])),
+                        y=alt.Y('Tipo:N', sort=None, title=''),
+                        tooltip=['Tipo', 'Quantidade']
+                    )
+                    rotulos_tipo = barras_tipo.mark_text(
+                        align='left', baseline='middle', dx=4, color='white'
+                    ).encode(text='Quantidade:Q')
+
+                    st.altair_chart((barras_tipo + rotulos_tipo).properties(height=320), use_container_width=True, theme="streamlit")
+
+                with st.expander(f"Detalhes dos itens por tipo ({visao_tipo})", expanded=False):
+                    opcoes_tipo = ["Todos"] + df_grafico_tipo['tipo'].tolist()
+                    tipo_selecionado = st.selectbox("Filtrar por tipo:", opcoes_tipo, key="select_detalhe_tipo")
+
+                    df_detalhe_tipo = df_tipos.copy()
+                    df_detalhe_tipo['tipo'] = df_detalhe_tipo['tipo'].str.capitalize()
+                    if tipo_selecionado != "Todos":
+                        df_detalhe_tipo = df_detalhe_tipo[df_detalhe_tipo['tipo'] == tipo_selecionado]
+
+                    df_detalhe_tipo['sprint'] = df_detalhe_tipo['sprint_nativa'].map(
+                        {"SIM": "Desenvolvimento", "NAO": "Backlog 2"}
+                    ) if 'sprint_nativa' in df_detalhe_tipo.columns else ""
+                    df_detalhe_tipo['link'] = "https://ddsinfo.atlassian.net/browse/" + df_detalhe_tipo['issue_key'].astype(str)
+                    df_detalhe_tipo = df_detalhe_tipo.sort_values(['tipo', 'issue_key'])
+
+                    st.caption(f"{len(df_detalhe_tipo)} item(ns)")
                     st.dataframe(
-                        df_auditoria_status[['issue_key', 'resumo', 'status', 'responsavel', 'link']],
-                        use_container_width=True, 
-                        hide_index=True,
+                        df_detalhe_tipo[['issue_key', 'tipo', 'sprint', 'resumo', 'status', 'responsavel', 'cliente', 'link']],
+                        use_container_width=True, hide_index=True,
                         column_config={
                             "issue_key": "Chave",
+                            "tipo": "Tipo",
+                            "sprint": "Sprint",
                             "resumo": st.column_config.TextColumn("Resumo", width="large"),
-                            "status": "Status no Banco",
+                            "status": "Status",
                             "responsavel": "Responsável",
-                            "link": st.column_config.LinkColumn("Abrir no Jira", display_text="https://ddsinfo.atlassian.net/browse/(.*)")
+                            "cliente": "Cliente",
+                            "link": st.column_config.LinkColumn("Jira")
                         }
                     )
-            else:
-                st.warning("A coluna 'status' não está disponível para gerar o gráfico.")
-        else:
-            st.info("Nenhum dado encontrado para analisar os status.")
 
             st.divider()
+
+        st.subheader("Comparativo de Fluxo (Status)")
+
+        # Fluxo pela fila real: status agora x média por status nos dias úteis da sprint anterior.
+        # Sem fila para as duas sprints, usa o cálculo anterior (else).
+        STATUS_FORA_FLUXO = {"6.0 concluído", "7.0 dispensado"}
+        _sid_fx = pd.to_numeric(df_fila_estado['sprint_id'], errors='coerce') if not df_fila_estado.empty else pd.Series(dtype=float)
+        fila_fx_atual = df_fila_estado[_sid_fx == id_sprint_selecionada] if not df_fila_estado.empty else df_fila_estado
+        _pos_fx = df_sprints.index[df_sprints['id'] == id_sprint_selecionada].tolist()
+        _pos_fx = df_sprints.index.get_loc(_pos_fx[0]) if _pos_fx else None
+        linha_ant_fx = df_sprints.iloc[_pos_fx + 1] if _pos_fx is not None and _pos_fx + 1 < len(df_sprints) else None
+        fila_fx_ant = (df_fila_estado[_sid_fx == int(linha_ant_fx['id'])]
+                       if linha_ant_fx is not None and not df_fila_estado.empty else pd.DataFrame())
+        usar_fluxo_fila = not fila_fx_atual.empty and not fila_fx_ant.empty
+
+        if usar_fluxo_fila:
+            escopo_fluxo = st.radio("Escopo:", ["Sprint Atual", "Sprint Atual + Backlog 2"],
+                                    horizontal=True, key="radio_escopo_fluxo")
+            st.caption("**Qtd atual** = itens em cada status na última sincronização. **Média da última sprint** = "
+                       "média de itens em cada status no fim de cada dia útil da sprint anterior. "
+                       "Fora da conta: 6.0 Concluído, 7.0 Dispensado, Bug e Ajuste.")
+            agora_fx = pd.Timestamp.now(tz="America/Sao_Paulo").tz_localize(None)
+
+            def _base_fluxo(df):
+                tipo = df['tipo_item'].astype(str).str.lower().str.strip()
+                d = df[(tipo != 'bug') & (tipo != 'ajuste') & (df['projeto'].isin(projeto))]
+                d = d[d['em_sprint_ativa'] == 1] if escopo_fluxo == "Sprint Atual" else d[(d['em_sprint_ativa'] == 1) | (d['em_backlog2'] == 1)]
+                return d[~d['status'].astype(str).str.lower().isin(STATUS_FORA_FLUXO)]
+
+            def _itens_em(d, t):
+                return d[(d['valido_de'] <= t) & (d['valido_ate'].isna() | (d['valido_ate'] > t))].drop_duplicates('issue_key')
+
+            def _media_por_status(d, ini, fim):
+                """Média de itens por status no fim de cada dia útil entre ini e fim (até agora)."""
+                contagens = []
+                for k in range((fim - ini).days + 1):
+                    dia_k = ini + timedelta(days=k)
+                    if dia_k.weekday() >= 5 or pd.Timestamp(dia_k) > agora_fx:
+                        continue
+                    t = min(pd.Timestamp(dia_k) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1), agora_fx)
+                    contagens.append(_itens_em(d, t).groupby('status').size())
+                if not contagens:
+                    return pd.Series(dtype=float), 0
+                return pd.concat(contagens, axis=1).fillna(0).mean(axis=1), len(contagens)
+
+            def _datas(linha):
+                return pd.to_datetime(linha['data_inicio']).date(), pd.to_datetime(linha['data_fim']).date()
+
+            ini_at, fim_at = _datas(df_sprints.iloc[_pos_fx])
+            ini_an, fim_an = _datas(linha_ant_fx)
+            base_at, base_an = _base_fluxo(fila_fx_atual), _base_fluxo(fila_fx_ant)
+            # "Agora" de uma sprint já encerrada = fim dela.
+            t_agora = min(agora_fx, pd.Timestamp(fim_at) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1))
+            itens_agora = _itens_em(base_at, t_agora)
+            media_ant, dias_ant = _media_por_status(base_an, ini_an, fim_an)
+
+            df_fluxo = pd.DataFrame({
+                'Qtd atual': itens_agora.groupby('status').size(),
+                'Média da última sprint': media_ant,
+            }).fillna(0)
+            df_fluxo.index.name = 'status'
+            df_fluxo = df_fluxo.reset_index().sort_values('status')
+            df_fluxo['Qtd atual'] = df_fluxo['Qtd atual'].astype(int)
+            df_fluxo['Variação'] = df_fluxo['Qtd atual'] - df_fluxo['Média da última sprint']
+            nome_ant = str(linha_ant_fx.get('descricao', 'anterior'))
+
+            col_fx1, col_fx2 = st.columns([3, 3])
+            with col_fx1:
+                st.markdown(f"**Média da última sprint ({nome_ant}, {dias_ant} dias úteis) x Qtd atual**")
+                df_melt_fx = (df_fluxo[['status', 'Média da última sprint', 'Qtd atual']]
+                              .melt(id_vars='status', var_name='Série', value_name='Qtd'))
+                barras_fx = alt.Chart(df_melt_fx).mark_bar(cornerRadiusEnd=2).encode(
+                    y=alt.Y('status:N', sort='ascending', title='', axis=alt.Axis(labelLimit=200)),
+                    x=alt.X('Qtd:Q', title='Quantidade de Itens', axis=alt.Axis(grid=False)),
+                    color=alt.Color('Série:N', scale=alt.Scale(domain=['Média da última sprint', 'Qtd atual'], range=['#FF9F43', '#4CA6FF']),
+                                    legend=alt.Legend(orient='bottom', title=None)),
+                    yOffset='Série:N',
+                    tooltip=['status', 'Série', alt.Tooltip('Qtd:Q', format='.1f')]
+                ).properties(height=max(320, len(df_fluxo) * 35))
+                st.altair_chart(barras_fx, use_container_width=True, theme="streamlit")
+
+            with col_fx2:
+                st.markdown("**Tabela de Variação**")
+                total_agora = df_fluxo['Qtd atual'].sum()
+                df_fluxo['% Atual'] = (df_fluxo['Qtd atual'] / total_agora * 100) if total_agora > 0 else 0
+
+                def _fmt_var(v):
+                    if round(v, 1) > 0: return f"🟢 +{v:.1f}"
+                    if round(v, 1) < 0: return f"🔴 {v:.1f}"
+                    return "⚪ 0"
+
+                df_fluxo['Var.'] = df_fluxo['Variação'].apply(_fmt_var)
+                st.dataframe(
+                    df_fluxo[['status', 'Média da última sprint', 'Qtd atual', 'Var.', '% Atual']],
+                    use_container_width=True, hide_index=True,
+                    column_config={
+                        "status": st.column_config.TextColumn("Fase (Status)", width="medium"),
+                        "Média da última sprint": st.column_config.NumberColumn(f"Média {nome_ant}", format="%.1f", width="small"),
+                        "Qtd atual": st.column_config.NumberColumn("Qtd atual", width="small"),
+                        "Var.": st.column_config.TextColumn("Variação", width="small"),
+                        "% Atual": st.column_config.ProgressColumn("% Atual", format="%d%%", min_value=0, max_value=100),
+                    }
+                )
+
+            st.divider()
+            with st.expander("Detalhes dos Itens Atuais", expanded=False):
+                _info_fx = (pd.concat([df_backlog, df_issues], ignore_index=True)[['issue_key', 'resumo']]
+                            .drop_duplicates(subset=['issue_key'], keep='last'))
+                df_aud_fx = itens_agora[['issue_key', 'status', 'tipo_item', 'responsavel']].merge(_info_fx, on='issue_key', how='left')
+                df_aud_fx['resumo'] = df_aud_fx['resumo'].fillna("—")
+                df_aud_fx['link'] = "https://ddsinfo.atlassian.net/browse/" + df_aud_fx['issue_key'].astype(str)
+                status_fx = st.selectbox("Filtrar lista por Status:", ["Todos"] + sorted(df_aud_fx['status'].unique().tolist()),
+                                         key="select_status_fluxo")
+                if status_fx != "Todos":
+                    df_aud_fx = df_aud_fx[df_aud_fx['status'] == status_fx]
+                st.dataframe(
+                    df_aud_fx.sort_values(['status', 'issue_key'])[['issue_key', 'resumo', 'status', 'tipo_item', 'responsavel', 'link']],
+                    use_container_width=True, hide_index=True,
+                    column_config={
+                        "issue_key": "Chave",
+                        "resumo": st.column_config.TextColumn("Resumo", width="large"),
+                        "status": "Status",
+                        "tipo_item": "Tipo",
+                        "responsavel": "Responsável",
+                        "link": st.column_config.LinkColumn("Jira", display_text="https://ddsinfo.atlassian.net/browse/(.*)"),
+                    }
+                )
+        else:
+            st.caption("Sem a fila reconstruída para esta sprint e a anterior: comparativo pelo cálculo anterior "
+                       "(backlog atual x backlog final da sprint anterior).")
+            st.markdown("<p style='font-size: 0.9em; color: gray; margin-top:-10px;'>🔵 <b>Sprint Atual</b>.</p>", unsafe_allow_html=True)
+            st.markdown("<p style='font-size: 0.9em; color: gray; margin-top:-10px;'>🟠 <b>Sprint Anterior</b>.</p>", unsafe_allow_html=True)
+
+            frames_status = []
+            if not df_backlog_filtrado.empty: frames_status.append(df_backlog_filtrado)
+            if not df_filtrado.empty: frames_status.append(df_filtrado)
+
+            if frames_status:
+                df_status_sprint = pd.concat(frames_status, ignore_index=True)
+            
+                if 'status' in df_status_sprint.columns:
+                    df_status_sprint['status'] = df_status_sprint['status'].fillna("Desconhecido")
+                    df_status_sprint = df_status_sprint[df_status_sprint['status'] != '6.0 Concluído']
+                
+                    df_atual = df_status_sprint.groupby('status').size().reset_index(name='Sprint Atual')
+                    df_atual = df_atual.sort_values(by='status', ascending=True)
+
+                    df_anterior = pd.DataFrame(columns=['status', 'Sprint Anterior'])
+                    try:
+                        idx_atual = df_sprints.index[df_sprints['nome_exibicao'] == sprint_selecionada].tolist()[0]
+                        if idx_atual + 1 < len(df_sprints):
+                            id_sprint_anterior = df_sprints.iloc[idx_atual + 1]['id']
+                            query_ant = f"SELECT STATUS FROM TB_SPRINT_BACKLOG WHERE ID_SPRINT = {id_sprint_anterior} AND STATUS != '6.0 Concluído'"
+                            df_dados_ant = conn.query(query_ant)
+                        
+                            if not df_dados_ant.empty:
+                                df_dados_ant['STATUS'] = df_dados_ant['STATUS'].fillna("Desconhecido")
+                                df_anterior = df_dados_ant.groupby('STATUS').size().reset_index(name='Sprint Anterior')
+                                df_anterior.rename(columns={'STATUS': 'status'}, inplace=True)
+                    except Exception as e:
+                        pass
+                
+                    df_comparativo = pd.merge(df_atual, df_anterior, on='status', how='outer').fillna(0)
+                    df_comparativo['Sprint Atual'] = df_comparativo['Sprint Atual'].astype(int)
+                    df_comparativo['Sprint Anterior'] = df_comparativo['Sprint Anterior'].astype(int)
+                    df_comparativo['Diferença'] = df_comparativo['Sprint Atual'] - df_comparativo['Sprint Anterior']
+                    df_comparativo = df_comparativo.sort_values(by='status', ascending=True)
+                
+                    col_st1, col_st2 = st.columns([3, 3])
+                
+                    with col_st1:
+                        st.markdown("**Comparativo Visual (Atual vs Anterior)**")
+                        df_melted = df_comparativo[['status', 'Sprint Atual', 'Sprint Anterior']].melt(id_vars='status', var_name='Sprint', value_name='Qtd')
+                        altura_status = max(320, len(df_comparativo) * 35)
+
+                        barras_status = alt.Chart(df_melted).mark_bar(cornerRadiusEnd=2).encode(
+                            y=alt.Y('status:N', sort='ascending', title='', axis=alt.Axis(labelLimit=200)),
+                            x=alt.X('Qtd:Q', title='Quantidade de Itens', axis=alt.Axis(grid=False)),
+                            color=alt.Color('Sprint:N', scale=alt.Scale(domain=['Sprint Atual', 'Sprint Anterior'], range=['#4CA6FF', '#FF9F43']), legend=alt.Legend(orient='bottom', title=None)),
+                            yOffset='Sprint:N',
+                            tooltip=['status', 'Sprint', 'Qtd']
+                        ).properties(height=altura_status)
+                    
+                        st.altair_chart(barras_status, use_container_width=True, theme="streamlit")
+                    
+                    with col_st2:
+                        st.markdown("**Tabela de Variação**")
+                        st.markdown("<p style='font-size: 0.85em; color: gray; margin-top:-10px;'>Evolução de volume retido em cada fase.</p>", unsafe_allow_html=True)
+                    
+                        df_tabela = df_comparativo.copy()
+                        total_atual = df_tabela['Sprint Atual'].sum()
+                        df_tabela['% Atual'] = (df_tabela['Sprint Atual'] / total_atual) * 100 if total_atual > 0 else 0
+                    
+                        def formatar_delta(valor):
+                            if valor > 0:
+                                return f"🟢 +{int(valor)}"
+                            elif valor < 0:
+                                return f"🔴 {int(valor)}"
+                            else:
+                                return "⚪ 0"
+                            
+                        df_tabela['Variação'] = df_tabela['Diferença'].apply(formatar_delta)
+                    
+                        st.dataframe(
+                            df_tabela[['status', 'Sprint Anterior', 'Sprint Atual', 'Variação', '% Atual']],
+                            use_container_width=True,
+                            hide_index=True,
+                            column_config={
+                                "status": st.column_config.TextColumn("Fase (Status)", width="medium"),
+                                "Sprint Anterior": st.column_config.NumberColumn("Anterior", width="small"),
+                                "Sprint Atual": st.column_config.NumberColumn("Atual", width="small"),
+                                "Variação": st.column_config.TextColumn("Variação", width="small"),
+                                "% Atual": st.column_config.ProgressColumn("% Atual", format="%d%%", min_value=0, max_value=100)
+                            }
+                        )
+                
+                    st.divider()
+                
+                
+                    with st.expander("Detalhes dos Itens Atuais", expanded=False):
+                        df_auditoria_status = df_status_sprint.copy()
+                        df_auditoria_status['link'] = "https://ddsinfo.atlassian.net/browse/" + df_auditoria_status['issue_key']
+                    
+                        lista_de_status = ["Todos"] + sorted(df_auditoria_status['status'].unique().tolist())
+                        status_selecionado = st.selectbox("Filtrar lista por Status:", lista_de_status)
+                    
+                        if status_selecionado != "Todos":
+                            df_auditoria_status = df_auditoria_status[df_auditoria_status['status'] == status_selecionado]
+                    
+                        st.dataframe(
+                            df_auditoria_status[['issue_key', 'resumo', 'status', 'responsavel', 'link']],
+                            use_container_width=True, 
+                            hide_index=True,
+                            column_config={
+                                "issue_key": "Chave",
+                                "resumo": st.column_config.TextColumn("Resumo", width="large"),
+                                "status": "Status no Banco",
+                                "responsavel": "Responsável",
+                                "link": st.column_config.LinkColumn("Abrir no Jira", display_text="https://ddsinfo.atlassian.net/browse/(.*)")
+                            }
+                        )
+                else:
+                    st.warning("A coluna 'status' não está disponível para gerar o gráfico.")
+            else:
+                st.info("Nenhum dado encontrado para analisar os status.")
+
+                st.divider()
  
         st.subheader(f"Avaliação da {sprint_selecionada.split(' - ')[0]}")
         
         with st.container(border=True):
-            lista_colaboradores_fixa = ["Castellar", "Daniel", "Eder", "Fernando", "Sergio", "Victor"]
+            lista_colaboradores_fixa = ["Castellar", "Daniel", "Eder", "Fernando", "Sergio", "Vera", "Victor"]
             
             row_sprint_info = df_sprints[df_sprints['id'] == id_sprint_selecionada].iloc[0]
             dt_fim_sprint = row_sprint_info['data_fim']
@@ -2373,41 +3231,110 @@ with aba_dashboard:
         #  EVOLUÇÃO DA QUALIDADE (NOTAS DOS GESTORES)
         # ========================================================
         st.divider()
+
+        query_historico_notas = """
+            SELECT s.ID_SPRINT as sprint_id, s.DESCRICAO as Sprint, a.NOME_GESTOR as Gestor,
+                   a.NOTA as Nota, s.DATA_INICIO as data_inicio
+            FROM TB_SPRINT_AVALIACAO a
+            JOIN TB_SPRINT s ON a.ID_SPRINT = s.ID_SPRINT
+            ORDER BY s.DATA_INICIO ASC
+        """
+        try:
+            df_tendencia_raw = conn.query(query_historico_notas, ttl="10m")
+        except Exception as e:
+            df_tendencia_raw = pd.DataFrame()
+            st.error(f"Erro ao carregar histórico de notas: {e}")
+
+        # Ordem cronológica, a mesma nos dois gráficos (a alfabética quebraria em "Sprint 100").
+        if not df_tendencia_raw.empty:
+            df_sprints_aval = (
+                df_tendencia_raw.groupby(['sprint_id', 'Sprint'], as_index=False)['data_inicio'].first()
+                .sort_values('data_inicio')
+            )
+            ordem_sprints_aval = df_sprints_aval['Sprint'].tolist()
+        else:
+            df_sprints_aval = pd.DataFrame(columns=['sprint_id', 'Sprint', 'data_inicio'])
+            ordem_sprints_aval = []
+
+        # Quantas sprints analisar (as N mais recentes). Vale para os pontos, as notas e a tabela por participante.
+        if len(df_sprints_aval) > 1:
+            qtd_sprints_aval = st.slider(
+                "Quantidade de sprints para análise (mais recentes):",
+                min_value=1, max_value=len(df_sprints_aval), value=min(7, len(df_sprints_aval)),
+                key="slider_sprints_avaliacao"
+            )
+            df_sprints_aval = df_sprints_aval.tail(qtd_sprints_aval)
+            ordem_sprints_aval = df_sprints_aval['Sprint'].tolist()
+            df_tendencia_raw = df_tendencia_raw[df_tendencia_raw['sprint_id'].isin(df_sprints_aval['sprint_id'])]
+
+        # ========================================================
+        #  PONTOS ENTREGUES POR SPRINT (desempenho quantitativo)
+        # ========================================================
+        st.subheader("Pontos Entregues por Sprint")
+        st.write("Total de pontos entregues em cada sprint avaliada, para comparar com a nota logo abaixo.")
+
+        if df_sprints_aval.empty or df_issues.empty:
+            st.info("Ainda não há sprints avaliadas para comparar os pontos entregues.")
+        else:
+            # Mesma base do card "Total de Pontos Entregues": TB_SPRINT_DETAILS, filtrado pelos projetos da barra lateral.
+            df_pts_aval = df_issues[
+                (df_issues['projeto'].isin(projeto)) & (df_issues['sprint_id'].isin(df_sprints_aval['sprint_id']))
+            ].copy()
+            df_pts_aval['pontos_num'] = pd.to_numeric(df_pts_aval['pontos'], errors='coerce').fillna(0.0)
+            df_pts_por_sprint = df_pts_aval.groupby('sprint_id', as_index=False)['pontos_num'].sum()
+            df_barras_pts = df_sprints_aval.merge(df_pts_por_sprint, on='sprint_id', how='left').fillna({'pontos_num': 0.0})
+
+            barras_pts = alt.Chart(df_barras_pts).mark_bar(color='#3CD6E7').encode(
+                x=alt.X('Sprint:N', sort=ordem_sprints_aval, title=None),
+                y=alt.Y('pontos_num:Q', title='Pontos entregues', axis=alt.Axis(grid=False, minExtent=60)),
+                tooltip=['Sprint', alt.Tooltip('pontos_num:Q', format='.1f', title='Pontos')]
+            )
+            rotulos_pts = barras_pts.mark_text(dy=-8, color='white').encode(text=alt.Text('pontos_num:Q', format='.0f'))
+            st.altair_chart((barras_pts + rotulos_pts).properties(height=260), use_container_width=True, theme="streamlit")
+
+        # ========================================================
+        #  EVOLUÇÃO DA QUALIDADE (NOTAS DOS GESTORES)
+        # ========================================================
         st.subheader("Evolução da Qualidade (Média das notas)")
         st.write("Acompanhamento das notas médias atribuída para cada sprint.")
 
         try:
-            query_historico_notas = """
-                SELECT s.DESCRICAO as Sprint, a.NOME_GESTOR as Gestor, a.NOTA as Nota, s.DATA_INICIO
-                FROM TB_SPRINT_AVALIACAO a
-                JOIN TB_SPRINT s ON a.ID_SPRINT = s.ID_SPRINT
-                ORDER BY s.DATA_INICIO ASC
-            """
-            df_tendencia_raw = conn.query(query_historico_notas, ttl="10m")
-
             if not df_tendencia_raw.empty:
-                df_media_sprint = df_tendencia_raw.groupby('Sprint')['Nota'].mean().reset_index()
+                df_media_sprint = df_tendencia_raw.groupby(['sprint_id', 'Sprint'], as_index=False)['Nota'].mean()
                 df_media_sprint.rename(columns={'Nota': 'Media'}, inplace=True)
+
+                # Zoom no eixo para os décimos aparecerem.
+                nota_min = float(df_media_sprint['Media'].min())
+                nota_max = float(df_media_sprint['Media'].max())
+                eixo_min = max(0.0, math.floor((nota_min - 0.2) * 10) / 10)
+                eixo_max = min(5.0, math.ceil((nota_max + 0.2) * 10) / 10)
 
                 chart_tendencia = alt.Chart(df_media_sprint).mark_line(
                     color='#4CA6FF',
                     strokeWidth=3,
                     point=alt.OverlayMarkDef(size=80, color='#4CA6FF', fill='white')
                 ).encode(
-                    x=alt.X('Sprint:N', sort=None, title="Sprints Anteriores"),
-                    y=alt.Y('Media:Q', title="Nota Média (0-5)", scale=alt.Scale(domain=[0, 5])),
-                    tooltip=['Sprint', alt.Tooltip('Media:Q', format='.1f', title='Nota Média')]
-                ).properties(height=350)
+                    x=alt.X('Sprint:N', sort=ordem_sprints_aval, title="Sprints Anteriores"),
+                    y=alt.Y('Media:Q', title="Nota Média",
+                            scale=alt.Scale(domain=[eixo_min, eixo_max], zero=False),
+                            axis=alt.Axis(format='.1f', minExtent=60)),
+                    tooltip=['Sprint', alt.Tooltip('Media:Q', format='.2f', title='Nota Média')]
+                )
+                rotulos_notas = chart_tendencia.mark_text(dy=-14, color='white').encode(
+                    text=alt.Text('Media:Q', format='.2f')
+                )
 
-                st.altair_chart(chart_tendencia, use_container_width=True, theme="streamlit")
+                st.altair_chart((chart_tendencia + rotulos_notas).properties(height=350), use_container_width=True, theme="streamlit")
                 with st.expander("Ver comparativo detalhado (Notas por participante)"):
-                    
+
                     df_pivot = df_tendencia_raw.pivot_table(
-                        index='Colaborador',
+                        index='Gestor',
                         columns='Sprint',
                         values='Nota',
                         aggfunc='first'
                     )
+                    df_pivot = df_pivot.reindex(columns=[s for s in ordem_sprints_aval if s in df_pivot.columns])
+                    df_pivot.index.name = 'Colaborador'
 
                     linha_media = df_pivot.mean().round(1)
 
@@ -2418,9 +3345,11 @@ with aba_dashboard:
                     df_exibicao = df_pivot.copy()
                     df_exibicao.loc['MÉDIA FINAL'] = linha_media
 
-                    df_exibicao.loc['MÉDIA FINAL'] = df_exibicao.loc['MÉDIA FINAL'].apply(lambda x: f"{x:.1f}" if isinstance(x, (int, float)) else x)
-
                     df_exibicao = df_exibicao.reset_index()
+                    # Tudo como texto (as colunas misturavam número e "-").
+                    for _col in df_exibicao.columns[1:]:
+                        df_exibicao[_col] = df_exibicao[_col].apply(
+                            lambda x: "-" if pd.isna(x) else (f"{x:.1f}" if isinstance(x, (int, float)) else str(x)))
 
                     st.dataframe(df_exibicao, use_container_width=True, hide_index=True)
                     
