@@ -3,7 +3,8 @@ import requests
 from requests.auth import HTTPBasicAuth
 from datetime import datetime, timedelta, timezone
 import pandas as pd
-from sqlalchemy import text 
+from sqlalchemy import text
+import time
 
 conn = st.connection("banco_dds", type="sql") 
 
@@ -20,13 +21,23 @@ CUSTOM_DEV_INICIAL_FIELD = "customfield_10594"
 
 TIPOS_SUSTENTACAO = ["erro", "atendimento","Retorno Negativo (RN)"]
 
-ANALISTAS = ["Fernando", "Jonathan Gabriel", "Thiago", "Paulo", "Kaic de Castro", "Enzo"]
+ANALISTAS = ["Fernando", "Jonathan Ferreira", "Thiago", "Paulo Domingues", "Kaic de Castro", "Enzo"]
 status_alvo = [
     "3.3 Revisão de Código","4.0 A TESTAR", "4.2 Mergear", "4.3 Pend. Versão",
     "4.4 A Testar (homologação)", "4.5 A testar (artefato)", "3.2 Reprovados",
     "5.3 Pendência de Homolog", "6.0 Concluído",
     "6.1 Pend. Gerar Artefatos", "6.2 Pend. Envio Homolog."
 ]
+
+# Ciclo total do burndown (até 6.0 Concluído).
+STATUS_FIM_CICLO_TOTAL = "6.0 Concluído"
+# Entre 3.3 e 6.0, sem 5.0/5.1/5.2 e 7.0 (os demais status já são contados no backlog).
+STATUS_POS_DESENVOLVIMENTO = [
+    "3.3 Revisão de Código", "4.0 A TESTAR", "4.1 Testando", "4.2 Mergear", "4.3 Pend. Versão",
+    "5.3 Pendência de Homolog", "6.0 Pend. Merge p/ Homol.", "6.1 Pend. Gerar Artefatos", "6.2 Pend. Envio Homolog."
+]
+# Preenchida por obter_dados_projeto: itens que entraram em 6.0 Concluído dentro do período da sprint.
+conclusoes_ciclo_total = []
 
 headers = {"Accept": "application/json", "Content-Type": "application/json"}
 auth = HTTPBasicAuth(JIRA_USER, JIRA_TOKEN)
@@ -88,6 +99,7 @@ def extrair_dev_inicial(issue_fields):
 
 def obter_dados_projeto(projeto):
     dados = []
+    conclusoes_ciclo_total.clear()
     next_token = ""
     while True:
         jql = f'project = "{projeto}" AND TYPE != Bug ORDER BY created DESC'
@@ -117,6 +129,23 @@ def obter_dados_projeto(projeto):
                         if status_str in status_alvo_lower:
                             dt = datetime.fromisoformat(hist["created"].replace("Z", "+00:00"))
                             datas_entrada_alvo.append(dt)
+
+            # Ciclo total: última entrada em 6.0 no período. Antes dos "continue": o item pode ter entrado em 3.3 em outra sprint.
+            datas_fim_ciclo = [
+                datetime.fromisoformat(hist["created"].replace("Z", "+00:00"))
+                for hist in changelog
+                for item in hist.get("items", [])
+                if item["field"] == "status" and item.get("toString", "").lower() == STATUS_FIM_CICLO_TOTAL.lower()
+            ]
+            datas_fim_no_periodo = [dt for dt in datas_fim_ciclo if any(ini <= dt <= f for (ini, f) in periodos)]
+            if datas_fim_no_periodo:
+                tipo_ct = issue["fields"].get("issuetype")
+                conclusoes_ciclo_total.append({
+                    "ISSUE_KEY": key,
+                    "TIPO_ITEM": tipo_ct["name"].lower() if tipo_ct else "sem tipo",
+                    # Gravado no horário de Brasília (mesmo fuso que define os limites da sprint).
+                    "DATA_CONCLUSAO_TOTAL": max(datas_fim_no_periodo).astimezone(FUSO_EQUIPE).strftime("%Y-%m-%d %H:%M:%S"),
+                })
 
             if datas_entrada_alvo:
                 data_transicao = min(datas_entrada_alvo) 
@@ -248,7 +277,7 @@ def limpar_snapshot_sprint(id_sprint, fase):
 
 def extrair_e_salvar_backlog(projeto, sprint_id):
     # Declarada diretamente no escopo local para garantir a leitura na instância
-    ANALISTAS = ["Fernando", "Jonathan Gabriel", "Thiago", "Paulo", "Kaic de Castro", "Enzo"]
+    ANALISTAS = ["Fernando", "Jonathan Ferreira", "Thiago", "Paulo Domingues", "Kaic de Castro", "Enzo"]
     
     dados_backlog = []
     
@@ -379,6 +408,228 @@ def extrair_e_salvar_backlog(projeto, sprint_id):
             print(f"❌ Erro ao salvar backlog no MySQL: {e}")
             raise e
 
+def salvar_conclusoes_ciclo_total(projeto, sprint_id):
+    """Grava em TB_SPRINT_CONCLUSAO_TOTAL o que obter_dados_projeto coletou para o projeto.
+
+    Isolada em try/except: se a tabela não existir ou der erro, a sincronização segue normal
+    (só a visão de ciclo total do burndown fica sem dados).
+    """
+    try:
+        with conn.session as s:
+            s.execute(text("DELETE FROM TB_SPRINT_CONCLUSAO_TOTAL WHERE ID_SPRINT = :id AND PROJETO = :projeto"),
+                      {"id": sprint_id, "projeto": projeto})
+            if conclusoes_ciclo_total:
+                s.execute(text("""
+                    INSERT INTO TB_SPRINT_CONCLUSAO_TOTAL (ID_SPRINT, ISSUE_KEY, PROJETO, TIPO_ITEM, DATA_CONCLUSAO_TOTAL)
+                    VALUES (:ID_SPRINT, :ISSUE_KEY, :PROJETO, :TIPO_ITEM, :DATA_CONCLUSAO_TOTAL)
+                """), [{**c, "ID_SPRINT": sprint_id, "PROJETO": projeto} for c in conclusoes_ciclo_total])
+            s.commit()
+    except Exception as e:
+        msg = f"⚠️ Ciclo total: falha ao salvar conclusões ({projeto}): {e}"
+        print(msg)
+        st.session_state.setdefault('logs_jira', []).append(msg)
+
+
+def contar_pos_desenvolvimento(projeto):
+    """Conta os itens entre 3.3 e 6.0 (STATUS_POS_DESENVOLVIMENTO), com o mesmo escopo das buscas
+    do backlog: sprint em andamento (nativa) e sprint-backlog 1218.
+
+    Retorna {"total", "sust", "desv", "total_nat", "sust_nat", "desv_nat"} ou None se alguma busca falhar
+    (melhor ficar sem o número do que gravar uma contagem pela metade).
+    """
+    tipos_sust = ['erro', 'atendimento', 'retorno negativo (rn)']
+    status_pos = ", ".join(f'"{s}"' for s in STATUS_POS_DESENVOLVIMENTO)
+    buscas = {
+        "SIM": f'type not in( bug ) AND project in ("{projeto}") AND Sprint in (openSprints()) AND status IN ({status_pos})',
+        "NAO": f'type not in( bug ) AND project in ("{projeto}") AND Sprint = 1218 AND status IN ({status_pos})',
+    }
+    tipos_por_escopo = {"SIM": [], "NAO": []}
+
+    for escopo, jql in buscas.items():
+        next_token = ""
+        while True:
+            params = {"jql": jql, "fields": "issuetype", "maxResults": 100}
+            if next_token: params["nextPageToken"] = next_token
+            try:
+                resp = requests.get(f"{JIRA_URL}/rest/api/3/search/jql", headers=headers, auth=auth, params=params, timeout=60)
+                resp.raise_for_status()
+            except requests.exceptions.RequestException as e:
+                msg = f"⚠️ Ciclo total: falha ao contar itens pós-desenvolvimento [{projeto} / {escopo}]: {e}"
+                print(msg)
+                st.session_state.setdefault('logs_jira', []).append(msg)
+                return None
+
+            data_json = resp.json()
+            for issue in data_json.get("issues", []):
+                tipo = issue["fields"].get("issuetype")
+                tipos_por_escopo[escopo].append(tipo["name"].lower() if tipo else "")
+
+            if data_json.get("isLast") or not data_json.get("issues", []): break
+            next_token = data_json.get("nextPageToken")
+            if not next_token: break
+
+    todos = tipos_por_escopo["SIM"] + tipos_por_escopo["NAO"]
+    nativos = tipos_por_escopo["SIM"]
+    sust = sum(1 for t in todos if t in tipos_sust)
+    sust_nat = sum(1 for t in nativos if t in tipos_sust)
+    return {
+        "total": len(todos), "sust": sust, "desv": len(todos) - sust,
+        "total_nat": len(nativos), "sust_nat": sust_nat, "desv_nat": len(nativos) - sust_nat,
+    }
+
+
+# Fila real da sprint: estado de cada item ao longo do tempo (sprint, status, tipo, responsável),
+# reconstruído pelo histórico do Jira e gravado em TB_SPRINT_FILA_ESTADO.
+CUSTOM_SPRINT_FIELD = "customfield_10020"
+SPRINT_BACKLOG2_ID = "1218"
+BOARDS_SPRINT = [6, 18]  # 6 = sprints STAR ("Sprint 58 - ..."), 18 = sprints ELFA ("Sprint Elfa 63")
+
+
+def _dt_jira(valor):
+    return datetime.fromisoformat(valor.replace("Z", "+00:00")) if valor else None
+
+
+def _get_jira(url, params=None, tentativas=3):
+    """GET no Jira com novas tentativas: a reconstrução faz dezenas de chamadas e uma queda de
+    conexão no meio não pode derrubar o cálculo inteiro."""
+    for n in range(tentativas):
+        try:
+            r = requests.get(url, headers=headers, auth=auth, params=params, timeout=90)
+            r.raise_for_status()
+            return r.json()
+        except requests.exceptions.RequestException:
+            if n == tentativas - 1:
+                raise
+            time.sleep(5 * (n + 1))
+
+
+def _sprints_dos_boards():
+    """Todas as sprints dos boards (só leitura, API Agile): id -> (início, conclusão)."""
+    sprints = {}
+    for board in BOARDS_SPRINT:
+        start = 0
+        while True:
+            js = _get_jira(f"{JIRA_URL}/rest/agile/1.0/board/{board}/sprint", {"startAt": start, "maxResults": 50})
+            for sp in js.get("values", []):
+                sprints[str(sp["id"])] = (_dt_jira(sp.get("startDate")), _dt_jira(sp.get("completeDate")))
+            start += len(js.get("values", []))
+            if js.get("isLast", True) or not js.get("values"): break
+    return sprints
+
+
+def calcular_fila_sprint(id_sprint, data_inicio, data_fim):
+    """Reconstrói, pelo histórico do Jira, o estado de cada item durante a sprint.
+    Só LÊ do Jira e não grava nada: devolve as linhas para TB_SPRINT_FILA_ESTADO."""
+    inicio, fim = periodo_sprint(data_inicio, data_fim)
+    agora = datetime.now(timezone.utc)
+    fim_janela = min(fim, agora)
+    em_andamento = fim > agora
+
+    sprints = _sprints_dos_boards()
+    fim_aberto = datetime.max.replace(tzinfo=timezone.utc)
+
+    def ativas_em(t):
+        # Mesma definição de openSprints(): iniciada e ainda não concluída.
+        return {sid for sid, (ini, conc) in sprints.items() if ini and ini <= t and (conc or fim_aberto) > t}
+
+    ids_na_janela = sorted(sid for sid, (ini, conc) in sprints.items()
+                           if ini and ini <= fim_janela and (conc or fim_aberto) > inicio)
+    filtro_sprint = f"Sprint in ({', '.join(ids_na_janela)}) OR " if ids_na_janela else ""
+    # "updated >=": item tirado da sprint antes de ela fechar perde a sprint do campo Sprint.
+    jql = (f'project in (STAR, ELFA) AND type != Bug AND created <= "{fim:%Y-%m-%d %H:%M}" AND '
+           f'({filtro_sprint}Sprint = {SPRINT_BACKLOG2_ID} OR updated >= "{inicio:%Y-%m-%d}")')
+
+    issues, token = [], ""
+    while True:
+        params = {"jql": jql, "fields": f"status,issuetype,project,assignee,created,{CUSTOM_SPRINT_FIELD}",
+                  "expand": "changelog", "maxResults": 50}
+        if token: params["nextPageToken"] = token
+        js = _get_jira(f"{JIRA_URL}/rest/api/3/search/jql", params)
+        issues += js.get("issues", [])
+        token = js.get("nextPageToken")
+        if js.get("isLast") or not token: break
+
+    # A busca pode truncar o histórico de itens muito alterados -> completa pelo endpoint próprio.
+    for it in issues:
+        cl = it.get("changelog", {})
+        if cl.get("total", 0) > len(cl.get("histories", [])):
+            hs, start = [], 0
+            while True:
+                rr = _get_jira(f"{JIRA_URL}/rest/api/3/issue/{it['key']}/changelog", {"startAt": start, "maxResults": 100})
+                hs += rr.get("values", []); start += len(rr.get("values", []))
+                if rr.get("isLast", True) or not rr.get("values"): break
+            it["changelog"] = {"histories": hs, "total": len(hs)}
+
+    # Momentos em que a lista de sprints ativas muda (abertura/fechamento) também cortam os períodos.
+    cortes_sprint = sorted({t for ini, conc in sprints.values() for t in (ini, conc) if t and inicio < t < fim_janela})
+
+    linhas = []
+    for it in issues:
+        f = it["fields"]
+        atual = {
+            "status": f["status"]["name"], "tipo": f["issuetype"]["name"],
+            "resp": (f.get("assignee") or {}).get("displayName") or "Sem responsável",
+            "sprints": {str(sp["id"]) for sp in (f.get(CUSTOM_SPRINT_FIELD) or [])},
+        }
+        mudancas = sorted(
+            [(_dt_jira(h["created"]), x) for h in it["changelog"]["histories"] for x in h["items"]
+             if x["field"] in ("status", "Sprint", "issuetype", "assignee")],
+            key=lambda m: m[0], reverse=True)
+
+        def estado_em(t):
+            # Parte do estado atual e desfaz, da mais recente para a mais antiga, as mudanças posteriores a t.
+            e = dict(atual, sprints=set(atual["sprints"]))
+            for quando, x in mudancas:
+                if quando <= t: break
+                if x["field"] == "status": e["status"] = x.get("fromString") or e["status"]
+                elif x["field"] == "issuetype": e["tipo"] = x.get("fromString") or e["tipo"]
+                elif x["field"] == "assignee": e["resp"] = x.get("fromString") or "Sem responsável"
+                else: e["sprints"] = {v.strip() for v in (x.get("from") or "").split(",") if v.strip()}
+            ativas = ativas_em(t)
+            return (e["status"], e["tipo"].lower(), e["resp"],
+                    1 if e["sprints"] & ativas else 0, 1 if SPRINT_BACKLOG2_ID in e["sprints"] else 0)
+
+        criado = _dt_jira(f["created"])
+        comeco = max(inicio, criado)
+        if comeco >= fim_janela: continue
+        cortes = sorted({comeco} | {q for q, _ in mudancas if comeco < q < fim_janela}
+                        | {t for t in cortes_sprint if comeco < t})
+
+        periodos = []
+        for i, t in enumerate(cortes):
+            est = estado_em(t)
+            ate = cortes[i + 1] if i + 1 < len(cortes) else (None if em_andamento else fim_janela)
+            if periodos and periodos[-1][0] == est:
+                periodos[-1][2] = ate  # mesmo estado do período anterior: só estende
+            else:
+                periodos.append([est, t, ate])
+
+        # Só interessam itens que em algum momento estiveram na sprint ativa ou no Backlog 2.
+        if not any(p[0][3] or p[0][4] for p in periodos): continue
+        local = lambda d: d.astimezone(FUSO_EQUIPE).replace(tzinfo=None) if d else None
+        for (status, tipo, resp, em_sprint, em_b2), de, ate in periodos:
+            linhas.append({"ID_SPRINT": id_sprint, "ISSUE_KEY": it["key"], "PROJETO": f["project"]["key"],
+                           "TIPO_ITEM": tipo, "RESPONSAVEL": resp, "STATUS": status,
+                           "EM_SPRINT_ATIVA": em_sprint, "EM_BACKLOG2": em_b2,
+                           "VALIDO_DE": local(de), "VALIDO_ATE": local(ate)})
+    return linhas
+
+
+def reconstruir_fila_sprint(id_sprint, data_inicio, data_fim):
+    """Calcula a fila real da sprint (só leitura no Jira) e grava em TB_SPRINT_FILA_ESTADO."""
+    linhas = calcular_fila_sprint(id_sprint, data_inicio, data_fim)
+    with conn.session as s:
+        s.execute(text("DELETE FROM TB_SPRINT_FILA_ESTADO WHERE ID_SPRINT = :id"), {"id": id_sprint})
+        if linhas:
+            s.execute(text("""
+                INSERT INTO TB_SPRINT_FILA_ESTADO
+                (ID_SPRINT, ISSUE_KEY, PROJETO, TIPO_ITEM, RESPONSAVEL, STATUS, EM_SPRINT_ATIVA, EM_BACKLOG2, VALIDO_DE, VALIDO_ATE)
+                VALUES (:ID_SPRINT, :ISSUE_KEY, :PROJETO, :TIPO_ITEM, :RESPONSAVEL, :STATUS, :EM_SPRINT_ATIVA, :EM_BACKLOG2, :VALIDO_DE, :VALIDO_ATE)
+            """), linhas)
+        s.commit()
+    return True, f"Fila reconstruída: {len({l['ISSUE_KEY'] for l in linhas})} itens, {len(linhas)} períodos."
+
+
 def sincronizar_com_banco(dados_extracao, projeto_nome, sprint_id):
     
     if not dados_extracao: return
@@ -484,17 +735,25 @@ def executar_extracao(data_inicio_input, data_fim_input, descricao_input, fase_s
 
         dados_star_pontos = obter_dados_projeto("STAR")
         sincronizar_com_banco(dados_star_pontos, "STAR", id_sprint)
-        
+        salvar_conclusoes_ciclo_total("STAR", id_sprint)
+
         dados_elfa_pontos = obter_dados_projeto("ELFA")
         sincronizar_com_banco(dados_elfa_pontos, "ELFA", id_sprint)
-        
-        
+        salvar_conclusoes_ciclo_total("ELFA", id_sprint)
+
+
         hoje = datetime.now(timezone.utc)
-        
+
+        # Ciclo total: contagem dos itens entre 3.3 e 6.0 (só com sprint em andamento, como o backlog).
+        contagem_pos = None
         if fim >= hoje:
             extrair_e_salvar_backlog("STAR", id_sprint)
             extrair_e_salvar_backlog("ELFA", id_sprint)
             status_backlog = "Pontos (STAR e ELFA) e Snapshot do Backlog (STAR e ELFA) atualizados."
+            pos_star = contar_pos_desenvolvimento("STAR")
+            pos_elfa = contar_pos_desenvolvimento("ELFA")
+            if pos_star is not None and pos_elfa is not None:
+                contagem_pos = {k: pos_star[k] + pos_elfa[k] for k in pos_star}
         else:
             status_backlog = "Apenas pontos (STAR e ELFA) atualizados (Snapshot do Backlog preservado, pois a sprint já foi encerrada)."
             print(f"🔒 Sprint encerrada em {fim.strftime('%d/%m/%Y')}. Snapshot do backlog preservado.")
@@ -528,15 +787,41 @@ def executar_extracao(data_inicio_input, data_fim_input, descricao_input, fase_s
                  :total, :sust, :desv,
                  :tot_nat, :sust_nat, :desv_nat)
             """)
-            s.execute(query_snap, {
+            resultado_snap = s.execute(query_snap, {
                 "id": id_sprint, "fase": fase_snapshot, "descricao_snap": desc_snapshot,
                 "total": tot_geral_global, "sust": tot_sust_global, "desv": tot_desv_global,
                 "tot_nat": tot_geral_nativa, "sust_nat": tot_sust_nativa, "desv_nat": tot_desv_nativa
             })
-            
+            id_snapshot_novo = resultado_snap.lastrowid
+
             s.execute(text("UPDATE TB_SPRINT SET ULTIMA_ATUALIZACAO = NOW() WHERE ID_SPRINT=:id"), {"id": id_sprint})
             s.commit()
-        
+
+        # Colunas *_POS num passo separado: uma falha aqui não impede o snapshot.
+        if contagem_pos is not None and id_snapshot_novo:
+            try:
+                with conn.session as s:
+                    s.execute(text("""
+                        UPDATE TB_SPRINT_SNAPSHOT SET
+                            QTD_TOTAL_POS = :total, QTD_SUST_POS = :sust, QTD_DESV_POS = :desv,
+                            QTD_TOTAL_POS_NATIVA = :total_nat, QTD_SUST_POS_NATIVA = :sust_nat, QTD_DESV_POS_NATIVA = :desv_nat
+                        WHERE ID_SNAPSHOT = :id_snap
+                    """), {**contagem_pos, "id_snap": id_snapshot_novo})
+                    s.commit()
+            except Exception as e:
+                msg = f"⚠️ Ciclo total: falha ao gravar contagem pós-desenvolvimento no snapshot: {e}"
+                print(msg)
+                st.session_state.setdefault('logs_jira', []).append(msg)
+
+        # Fila real: protegida, se falhar a sincronização segue normal.
+        try:
+            ok_fila, msg_fila = reconstruir_fila_sprint(id_sprint, data_inicio_input, data_fim_input)
+            print(msg_fila)
+        except Exception as e:
+            msg = f"⚠️ Fila real: falha ao reconstruir pelo histórico do Jira: {e}"
+            print(msg)
+            st.session_state.setdefault('logs_jira', []).append(msg)
+
         return True, f"{msg_validacao} {status_backlog}"
         
     except Exception as e:
