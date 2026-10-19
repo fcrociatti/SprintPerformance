@@ -893,6 +893,9 @@ with aba_dashboard:
                         eq_itens_fin = float(devs_agrupado_fin['Quantidade'].sum()) if not devs_agrupado_fin.empty else 0.0
                         eq_itens_pend = float(devs_agrupado_pend['Quantidade'].sum()) if not devs_agrupado_pend.empty else 0.0
                         eq_itens_total = eq_itens_fin + eq_itens_pend
+                        eq_pts_fin = float(devs_agrupado_fin['Pontos'].sum()) if not devs_agrupado_fin.empty else 0.0
+                        eq_pts_pend = float(devs_agrupado_pend['Pontos'].sum()) if not devs_agrupado_pend.empty else 0.0
+                        eq_pts_total = eq_pts_fin + eq_pts_pend
 
                         def _barra_consolidada(feito, total, cor, casas=0):
                             """Barra única equipe: sólido = finalizado, silhueta = total solicitado."""
@@ -934,6 +937,15 @@ with aba_dashboard:
                             st.markdown("**Consolidado da Equipe**")
                             st.altair_chart(
                                 _barra_consolidada(eq_itens_fin, eq_itens_total, '#4CA6FF', casas=0),
+                                use_container_width=True, theme="streamlit"
+                            )
+
+                        # Mesma base do consolidado de itens: pontos finalizados x (finalizados + pendentes).
+                        # Item pendente sem estimativa ("?") entra com 0 ponto.
+                        with st.container(border=True):
+                            st.markdown("**Consolidado da Equipe (Pontos)**")
+                            st.altair_chart(
+                                _barra_consolidada(eq_pts_fin, eq_pts_total, '#FF9F43', casas=1),
                                 use_container_width=True, theme="streamlit"
                             )
 
