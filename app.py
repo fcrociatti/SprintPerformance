@@ -1836,7 +1836,18 @@ with aba_dashboard:
                 media_entrega_por_dia = [round(sum(v) / len(v), 1) if v else None for v in entregas_hist_f.values()]
 
             bd_dados = []
-            passo_ideal = tickets_iniciais / (qtd_dias - 1) if qtd_dias > 1 else 0
+            # Fim de semana não conta: a diretriz anda só nos dias úteis e sábado/domingo entram na sexta-feira
+            # (o dia útil anterior). Fim de semana antes do 1º dia útil da sprint entra nesse 1º dia.
+            dias_uteis_sprint = [d for d in dias_sprint if d.weekday() < 5]
+            grupo_do_dia, ultimo_util = {}, None
+            for d in dias_sprint:
+                if d.weekday() < 5:
+                    ultimo_util = d
+                grupo_do_dia[d] = ultimo_util
+            for d in dias_sprint:
+                if grupo_do_dia[d] is None:
+                    grupo_do_dia[d] = dias_uteis_sprint[0] if dias_uteis_sprint else d
+            passo_ideal = tickets_iniciais / (len(dias_uteis_sprint) - 1) if len(dias_uteis_sprint) > 1 else 0
             hoje = datetime.now().date()
             # Antes começava com ultimo_valor_conhecido = tickets_iniciais e ficava "preso" nesse valor
             # (ou em 0, quando não havia backlog sincronizado ainda) até achar o primeiro dado real.
@@ -1866,7 +1877,7 @@ with aba_dashboard:
                 dict_criados_diario = {data_ini + timedelta(days=o): len(e) for o, e in entradas_fila_dia.items()}
 
             for i, dia in enumerate(dias_sprint):
-                ideal_restante = tickets_iniciais - (passo_ideal * i)
+                ideal_restante = tickets_iniciais - (passo_ideal * (dias_uteis_sprint.index(grupo_do_dia[dia]) if dias_uteis_sprint else i))
                 # total_atual_pendentes só é None no ciclo total sem contagem pós-desenvolvimento.
                 if dia == hoje and total_atual_pendentes is not None: ultimo_valor_conhecido = total_atual_pendentes
                 elif dia in dict_real_diario: ultimo_valor_conhecido = dict_real_diario[dia]
@@ -1877,6 +1888,7 @@ with aba_dashboard:
 
                 bd_dados.append({
                     "Data": dia.strftime("%d/%m"),
+                    "_grupo": grupo_do_dia[dia],
                     "Diretriz": round(ideal_restante, 1),
                     "Trabalho Restante": ultimo_valor_conhecido if dia <= hoje else None,
                     "Concluídos Acumulados": total_concluidos_acumulado if dia <= hoje else None,
@@ -1889,6 +1901,18 @@ with aba_dashboard:
             df_burndown = pd.DataFrame(bd_dados)
             df_burndown['Média Entrega Diária'] = pd.to_numeric(df_burndown['Média Entrega Diária'], errors='coerce')
             df_burndown['Média por Sprint'] = pd.to_numeric(df_burndown['Média por Sprint'], errors='coerce')
+
+            # Uma coluna por dia útil. Linhas (restante, acumulado, médias, diretriz) ficam com o último valor do
+            # grupo, ou seja, o de domingo na sexta; as barras diárias (incluídos/concluídos) somam sexta + fim de semana.
+            colunas_nivel = ["Diretriz", "Trabalho Restante", "Concluídos Acumulados", "Média Entrega Diária", "Média por Sprint"]
+            colunas_dia = ["Itens Incluídos (Diário)", "Itens Concluídos (Diário)"]
+            for c in colunas_nivel + colunas_dia:
+                df_burndown[c] = pd.to_numeric(df_burndown[c], errors='coerce')
+            df_burndown = df_burndown.groupby('_grupo', sort=True).agg(
+                {**{c: 'last' for c in colunas_nivel}, **{c: (lambda x: x.sum(min_count=1)) for c in colunas_dia}}
+            ).reset_index()
+            df_burndown['Data'] = df_burndown['_grupo'].apply(lambda d: d.strftime("%d/%m"))
+            df_burndown = df_burndown.drop(columns=['_grupo'])
 
             # ========================================================
             # MONTAGEM DO GRÁFICO (Limpo, sem picos)
@@ -2057,6 +2081,7 @@ with aba_dashboard:
                 else:
                     grafico_burndown = grafico_primario.properties(height=420)
                 st.altair_chart(grafico_burndown, use_container_width=True, theme="streamlit")
+                st.caption("Sábado e domingo entram na sexta-feira.")
             else:
                 st.info("Sem dados suficientes para renderizar o gráfico de Burndown.")
             
