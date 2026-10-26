@@ -1,6 +1,9 @@
 import streamlit as st
 import pandas as pd
 import altair as alt
+import requests
+from requests.auth import HTTPBasicAuth
+from urllib.parse import quote
 from datetime import timedelta, datetime
 from somaCopia import executar_extracao
 from somaCopia import limpar_snapshot_sprint 
@@ -131,6 +134,44 @@ def carregar_fila_estado():
 
 
 df_fila_estado = carregar_fila_estado()
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def carregar_carga_devs_jira(projetos):
+    # Demanda dos devs lida direto do Jira, pra bater item a item com o filtro da org.
+    # O banco não serve aqui: item que chegou em 4.x antes da sprint começar não fica em nenhuma tabela.
+    lista = ", ".join(f'"{p}"' for p in projetos)
+    base = f'project in ({lista}) AND Sprint in (openSprints()) AND type not in (Bug, Ajuste)'
+    # Busca com 6.0 Concluído (entra como finalizado); o filtro da org é a mesma base sem o 6.0.
+    jql_busca = f'{base} AND status != "7.0 Dispensado"'
+    jql_filtro_org = f'{base} AND status not in ("6.0 Concluído", "7.0 Dispensado")'
+    auth = HTTPBasicAuth(st.secrets["JIRA_USER"], st.secrets["JIRA_TOKEN"])
+    linhas, token = [], ""
+    while True:
+        params = {"jql": jql_busca, "fields": "assignee,status,customfield_10069", "maxResults": 100}
+        if token:
+            params["nextPageToken"] = token
+        resp = requests.get(f'{st.secrets["JIRA_URL"]}/rest/api/3/search/jql', auth=auth,
+                            headers={"Accept": "application/json"}, params=params, timeout=60)
+        resp.raise_for_status()
+        js = resp.json()
+        for issue in js.get("issues", []):
+            campos = issue["fields"]
+            pts = campos.get("customfield_10069")
+            # Story points vem como opção ({"value": "3"}); "?" (sem estimativa) entra como 0.
+            pts = pts.get("value") if isinstance(pts, dict) else pts
+            linhas.append({
+                "issue_key": issue["key"],
+                "responsavel": (campos.get("assignee") or {}).get("displayName", "Sem responsável"),
+                "status": (campos.get("status") or {}).get("name", ""),
+                "pontos": pd.to_numeric(str(pts).replace(",", "."), errors="coerce"),
+            })
+        token = js.get("nextPageToken")
+        if js.get("isLast", True) or not token:
+            break
+    df = pd.DataFrame(linhas, columns=["issue_key", "responsavel", "status", "pontos"])
+    df["pontos"] = df["pontos"].fillna(0.0)
+    return df, jql_filtro_org
 
 
 if not df_sprints.empty:
@@ -965,102 +1006,100 @@ with aba_dashboard:
 
                             st.markdown("<br>", unsafe_allow_html=True)
 
-                            # outer: dev que só tem itens na outra visão (ex.: entregou tudo e não tem
-                            # nada pendente) precisa aparecer no gráfico, senão a barra "total" mente.
-                            df_combo = devs_agrupado.merge(
-                                devs_agrupado_ghost, on='Responsável', how='outer', suffixes=('', '_ghost')
-                            ).fillna(0)
-
-                            # Total analisado do dev = o que está na visão atual + o que está na outra.
-                            # A barra sólida vai de 0 até a visão atual; a silhueta se estende até o total.
-                            df_combo['Total_Itens'] = df_combo['Quantidade'] + df_combo['Quantidade_ghost']
-                            df_combo['Total_Pontos'] = df_combo['Pontos'] + df_combo['Pontos_ghost']
-
-                            # Rótulo do total só aparece quando há sobra de silhueta, senão colide
-                            # com o rótulo da barra sólida (que fica na mesma posição).
-                            df_combo['Rotulo_Total_Itens'] = [
-                                f"{t:.0f}" if t > q else "" for t, q in zip(df_combo['Total_Itens'], df_combo['Quantidade'])
-                            ]
-                            df_combo['Rotulo_Total_Pontos'] = [
-                                f"{t:.1f}" if t > p else "" for t, p in zip(df_combo['Total_Pontos'], df_combo['Pontos'])
-                            ]
-
-                            ordem_devs = (
-                                df_combo.sort_values(by=['Quantidade', 'Total_Itens'], ascending=False)['Responsável'].tolist()
-                            )
-
-                            col_graf1, col_graf2 = st.columns(2)
-                            altura_grafico = max(250, num_devs * 35)
-
-                            with col_graf1:
-                                st.markdown(f"###### Itens {rotulo_view.lower()} por Devs")
-                                ghost_itens = alt.Chart(df_combo).mark_bar(
-                                    fill="#4CA6FF", fillOpacity=0.15,
-                                    stroke="#4CA6FF", strokeOpacity=0.55, strokeWidth=1,
-                                    cornerRadiusEnd=3
-                                ).encode(
-                                    x=alt.X('Total_Itens:Q', title='Itens'),
-                                    y=alt.Y('Responsável:N', sort=ordem_devs, title=''),
-                                    tooltip=[
-                                        'Responsável',
-                                        alt.Tooltip('Total_Itens:Q', title='Itens (Total)', format='.0f'),
-                                        alt.Tooltip('Quantidade:Q', title=f'Itens ({rotulo_view})', format='.0f'),
-                                        alt.Tooltip('Quantidade_ghost:Q', title=f'Itens ({rotulo_ghost})', format='.0f')
-                                    ]
-                                )
-                                label_total_itens = ghost_itens.mark_text(
-                                    align='left', baseline='middle', dx=3, color='#9AA5B1'
-                                ).encode(text=alt.Text('Rotulo_Total_Itens:N'))
-                                bar_itens = alt.Chart(df_combo).mark_bar(color="#4CA6FF", cornerRadiusEnd=3).encode(
-                                    x=alt.X('Quantidade:Q', title='Itens', axis=alt.Axis(grid=False)),
-                                    y=alt.Y('Responsável:N', sort=ordem_devs, title=''),
-                                    tooltip=['Responsável', alt.Tooltip('Quantidade:Q', title=f'Itens ({rotulo_view})'), alt.Tooltip('Pontos:Q', format='.1f')]
-                                )
-                                # outer merge pode transformar a contagem em float -> formata pra não virar "19.0"
-                                label_itens = bar_itens.mark_text(align='left', baseline='middle', dx=3, color='white').encode(
-                                    text=alt.Text('Quantidade:Q', format='.0f')
-                                )
-                                st.altair_chart(
-                                    (ghost_itens + bar_itens + label_itens + label_total_itens).properties(height=altura_grafico),
-                                    use_container_width=True, theme="streamlit"
-                                )
-
-                            with col_graf2:
-                                st.markdown(f"###### Pontos {rotulo_view.lower()} por Devs")
-                                ghost_pontos = alt.Chart(df_combo).mark_bar(
-                                    fill="#FF9F43", fillOpacity=0.15,
-                                    stroke="#FF9F43", strokeOpacity=0.55, strokeWidth=1,
-                                    cornerRadiusEnd=3
-                                ).encode(
-                                    x=alt.X('Total_Pontos:Q', title='Pontos'),
-                                    y=alt.Y('Responsável:N', sort=ordem_devs, title=''),
-                                    tooltip=[
-                                        'Responsável',
-                                        alt.Tooltip('Total_Pontos:Q', title='Pontos (Total)', format='.1f'),
-                                        alt.Tooltip('Pontos:Q', title=f'Pontos ({rotulo_view})', format='.1f'),
-                                        alt.Tooltip('Pontos_ghost:Q', title=f'Pontos ({rotulo_ghost})', format='.1f')
-                                    ]
-                                )
-                                label_total_pontos = ghost_pontos.mark_text(
-                                    align='left', baseline='middle', dx=3, color='#9AA5B1'
-                                ).encode(text=alt.Text('Rotulo_Total_Pontos:N'))
-                                bar_pontos = alt.Chart(df_combo).mark_bar(color="#FF9F43", cornerRadiusEnd=3).encode(
-                                    x=alt.X('Pontos:Q', title='Pontos', axis=alt.Axis(grid=False)),
-                                    y=alt.Y('Responsável:N', sort=ordem_devs, title=''),
-                                    tooltip=['Responsável', alt.Tooltip('Quantidade:Q', title=f'Itens ({rotulo_view})'), alt.Tooltip('Pontos:Q', format='.1f')]
-                                )
-                                label_pontos = bar_pontos.mark_text(align='left', baseline='middle', dx=3, color='white').encode(text=alt.Text('Pontos:Q', format='.1f'))
-                                st.altair_chart(
-                                    (ghost_pontos + bar_pontos + label_pontos + label_total_pontos).properties(height=altura_grafico),
-                                    use_container_width=True, theme="streamlit"
-                                )
-
-                            st.caption(
-                                f"Barra sólida = {rotulo_view.lower()}. A silhueta se estende até o **total analisado** "
-                                f"do dev na sprint ({rotulo_view.lower()} + {rotulo_ghost.lower()})."
-                            )
                         else:
                             st.info(f"Nenhum item {rotulo_view.lower()} encontrado para a equipe.")
+
+                        # ---- Carga por dev direto do Jira ----
+                        # Mesmo filtro da org (sprints abertas, sem 6.0/7.0, sem Bug/Ajuste): mostra quem está
+                        # com pouca ou muita demanda com os mesmos números que o Jira mostra.
+                        try:
+                            df_carga_jira, jql_carga = carregar_carga_devs_jira(tuple(sorted(projeto)))
+                        except Exception as e:
+                            df_carga_jira, jql_carga = None, ""
+                            st.warning(f"Não foi possível ler a carga dos devs no Jira agora: {e}")
+
+                        if df_carga_jira is not None:
+                            # Pendente = dev ainda não terminou; Finalizado = status_alvo (mesma regra do resto do
+                            # dashboard: do 3.3 em diante, até 6.0). Tudo vem da mesma consulta, então um item nunca
+                            # conta nos dois lados.
+                            df_carga_jira = df_carga_jira[df_carga_jira['responsavel'].str.contains(nomes_devs_regex, case=False, na=False)].copy()
+                            df_carga_jira['Situação'] = df_carga_jira['status'].apply(
+                                lambda s: 'Finalizado' if s in status_alvo else 'Pendente'
+                            )
+                            plan_devs = (
+                                df_carga_jira.groupby(['responsavel', 'Situação'])
+                                .agg(Itens=('issue_key', 'count'), Pontos=('pontos', 'sum')).reset_index()
+                                .rename(columns={'responsavel': 'Responsável'})
+                            )
+                            if plan_devs.empty:
+                                st.info("Nenhum item dos devs na consulta do Jira.")
+                            else:
+                                # Quem tem mais pendente fica no topo (é o que pesa no planejamento).
+                                pend_por_dev = plan_devs[plan_devs['Situação'] == 'Pendente'].set_index('Responsável')
+                                ordem_devs = (
+                                    plan_devs[['Responsável']].drop_duplicates().set_index('Responsável')
+                                    .join(pend_por_dev[['Itens', 'Pontos']]).fillna(0)
+                                    .sort_values(by=['Itens', 'Pontos'], ascending=False).index.tolist()
+                                )
+                                altura_grafico = max(250, len(ordem_devs) * 40)
+
+                                def _grafico_planejamento(coluna, titulo_eixo, cor_pend, cor_fin, casas):
+                                    """Barra por dev: pendente (à esquerda) + finalizado em seguida, com o total na ponta."""
+                                    larg = plan_devs.pivot_table(index='Responsável', columns='Situação', values=coluna, aggfunc='sum', fill_value=0)
+                                    for sit in ('Pendente', 'Finalizado'):
+                                        if sit not in larg.columns:
+                                            larg[sit] = 0.0
+                                    larg = larg.reset_index()
+                                    # Posições calculadas na mão: o empilhamento automático não alinha os rótulos com as barras.
+                                    seg_pend = pd.DataFrame({'Responsável': larg['Responsável'], 'Situação': 'Pendente', 'Valor': larg['Pendente'],
+                                                             'Inicio': 0.0, 'Fim': larg['Pendente']})
+                                    seg_fin = pd.DataFrame({'Responsável': larg['Responsável'], 'Situação': 'Finalizado', 'Valor': larg['Finalizado'],
+                                                            'Inicio': larg['Pendente'], 'Fim': larg['Pendente'] + larg['Finalizado']})
+                                    segs = pd.concat([seg_pend, seg_fin], ignore_index=True)
+                                    segs['Centro'] = (segs['Inicio'] + segs['Fim']) / 2
+                                    segs['Rotulo'] = segs['Valor'].apply(lambda v: f"{v:.{casas}f}" if v > 0 else "")
+                                    totais = pd.DataFrame({'Responsável': larg['Responsável'], 'Total': larg['Pendente'] + larg['Finalizado']})
+                                    totais['Rotulo'] = totais['Total'].apply(lambda v: f"Total {v:.{casas}f}")
+                                    # Folga no eixo pra o rótulo do total da maior barra não sair do gráfico.
+                                    escala = alt.Scale(domain=[0, max(float(totais['Total'].max()), 1.0) * 1.3])
+                                    eixo_y = alt.Y('Responsável:N', sort=ordem_devs, title='')
+                                    barras = alt.Chart(segs[segs['Valor'] > 0]).mark_bar(cornerRadius=2).encode(
+                                        x=alt.X('Inicio:Q', title=titulo_eixo, axis=alt.Axis(grid=False), scale=escala),
+                                        x2='Fim:Q',
+                                        y=eixo_y,
+                                        color=alt.Color('Situação:N', scale=alt.Scale(domain=['Pendente', 'Finalizado'], range=[cor_pend, cor_fin]),
+                                                        legend=alt.Legend(title='', orient='bottom')),
+                                        tooltip=['Responsável', 'Situação', alt.Tooltip('Valor:Q', title=titulo_eixo, format=f'.{casas}f')]
+                                    )
+                                    rotulo_seg = alt.Chart(segs[segs['Valor'] > 0]).mark_text(color='white', fontSize=11, fontWeight='bold').encode(
+                                        x=alt.X('Centro:Q', scale=escala), y=eixo_y, text='Rotulo:N'
+                                    )
+                                    rotulo_total = alt.Chart(totais).mark_text(align='left', baseline='middle', dx=5, color='#9AA5B1', fontSize=11).encode(
+                                        x=alt.X('Total:Q', scale=escala), y=eixo_y, text='Rotulo:N'
+                                    )
+                                    return (barras + rotulo_seg + rotulo_total).properties(height=altura_grafico)
+
+                                col_graf1, col_graf2 = st.columns(2)
+                                with col_graf1:
+                                    st.markdown("###### Itens por Dev: pendente x finalizado")
+                                    st.altair_chart(
+                                        _grafico_planejamento('Itens', 'Itens', '#4CA6FF', '#2F6B9E', 0),
+                                        use_container_width=True, theme="streamlit"
+                                    )
+                                with col_graf2:
+                                    st.markdown("###### Pontos por Dev: pendente x finalizado")
+                                    st.altair_chart(
+                                        _grafico_planejamento('Pontos', 'Pontos', '#FF9F43', '#9C6A35', 1),
+                                        use_container_width=True, theme="streamlit"
+                                    )
+
+                                link_jira = f'{st.secrets["JIRA_URL"]}/issues/?jql={quote(jql_carga)}'
+                                st.caption(
+                                    "Lido direto do Jira (sprints abertas, sem 7.0 Dispensado, Bug e Ajuste), sem depender da sprint "
+                                    "escolhida ao lado; atualiza a cada 5 min. **Pendente** = dev ainda não terminou; **Finalizado** = "
+                                    "do 3.3 Revisão de Código em diante, incluindo 6.0 Concluído. Item sem estimativa (?) conta 0 ponto. "
+                                    f"Pendente + finalizado fora do 6.0 = o filtro da org: [abrir no Jira]({link_jira})"
+                                )
 
                         st.markdown("<br>", unsafe_allow_html=True)
                         
