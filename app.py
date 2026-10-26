@@ -3,7 +3,6 @@ import pandas as pd
 import altair as alt
 import requests
 from requests.auth import HTTPBasicAuth
-from urllib.parse import quote
 from datetime import timedelta, datetime
 from somaCopia import executar_extracao
 from somaCopia import limpar_snapshot_sprint 
@@ -148,7 +147,7 @@ def carregar_carga_devs_jira(projetos):
     auth = HTTPBasicAuth(st.secrets["JIRA_USER"], st.secrets["JIRA_TOKEN"])
     linhas, token = [], ""
     while True:
-        params = {"jql": jql_busca, "fields": "assignee,status,customfield_10069", "maxResults": 100}
+        params = {"jql": jql_busca, "fields": "assignee,status,summary,issuetype,customfield_10069", "maxResults": 100}
         if token:
             params["nextPageToken"] = token
         resp = requests.get(f'{st.secrets["JIRA_URL"]}/rest/api/3/search/jql', auth=auth,
@@ -164,12 +163,15 @@ def carregar_carga_devs_jira(projetos):
                 "issue_key": issue["key"],
                 "responsavel": (campos.get("assignee") or {}).get("displayName", "Sem responsável"),
                 "status": (campos.get("status") or {}).get("name", ""),
+                "resumo": campos.get("summary", ""),
+                "tipo_item": (campos.get("issuetype") or {}).get("name", ""),
+                "pontos_txt": "" if pts is None else str(pts),
                 "pontos": pd.to_numeric(str(pts).replace(",", "."), errors="coerce"),
             })
         token = js.get("nextPageToken")
         if js.get("isLast", True) or not token:
             break
-    df = pd.DataFrame(linhas, columns=["issue_key", "responsavel", "status", "pontos"])
+    df = pd.DataFrame(linhas, columns=["issue_key", "responsavel", "status", "resumo", "tipo_item", "pontos_txt", "pontos"])
     df["pontos"] = df["pontos"].fillna(0.0)
     return df, jql_filtro_org
 
@@ -1018,6 +1020,7 @@ with aba_dashboard:
                             df_carga_jira, jql_carga = None, ""
                             st.warning(f"Não foi possível ler a carga dos devs no Jira agora: {e}")
 
+                        ordem_devs = []
                         if df_carga_jira is not None:
                             # Pendente = dev ainda não terminou; Finalizado = status_alvo (mesma regra do resto do
                             # dashboard: do 3.3 em diante, até 6.0). Tudo vem da mesma consulta, então um item nunca
@@ -1087,32 +1090,57 @@ with aba_dashboard:
                                     )
                                     return (barras + rotulo_pend + rotulo_fin + rotulo_pct).properties(height=altura_grafico)
 
-                                col_graf1, col_graf2 = st.columns(2)
-                                with col_graf1:
-                                    st.markdown("###### Itens por Dev: o que falta fazer")
-                                    st.altair_chart(
-                                        _grafico_planejamento('Itens', 'Itens', '#2F9BFF', '#3B4A5C', 0),
-                                        use_container_width=True, theme="streamlit"
-                                    )
-                                with col_graf2:
-                                    st.markdown("###### Pontos por Dev: o que falta fazer")
-                                    st.altair_chart(
-                                        _grafico_planejamento('Pontos', 'Pontos', '#FF8A1F', '#5A4632', 1),
-                                        use_container_width=True, theme="streamlit"
-                                    )
-
-                                link_jira = f'{st.secrets["JIRA_URL"]}/issues/?jql={quote(jql_carga)}'
-                                st.caption(
-                                    "Lido direto do Jira (sprints abertas, sem 7.0 Dispensado, Bug e Ajuste), sem depender da sprint "
-                                    "escolhida ao lado; atualiza a cada 5 min. **Falta fazer** = dev ainda não terminou; **Já feito** = "
-                                    "do 3.3 Revisão de Código em diante, incluindo 6.0 Concluído. Item sem estimativa (?) conta 0 ponto. "
-                                    f"Falta fazer + já feito (sem o 6.0) = o filtro da org: [abrir no Jira]({link_jira})"
+                                visao_carga = st.radio(
+                                    "Ver por:", ["Itens", "Pontos"], horizontal=True, key="radio_carga_dev_view"
                                 )
+                                st.markdown(f"###### {visao_carga} por Dev: o que falta fazer")
+                                if visao_carga == "Itens":
+                                    grafico_carga = _grafico_planejamento('Itens', 'Itens', '#2F9BFF', '#3B4A5C', 0)
+                                else:
+                                    grafico_carga = _grafico_planejamento('Pontos', 'Pontos', '#FF8A1F', '#5A4632', 1)
+                                st.altair_chart(grafico_carga, use_container_width=True, theme="streamlit")
 
                         st.markdown("<br>", unsafe_allow_html=True)
                         
 
                         with st.expander("Detalhes de itens da Equipe de Desenvolvimento"):
+                            # Quais itens estão com cada dev (mesma base dos gráficos: Jira, sprints abertas).
+                            st.markdown("**Itens de cada dev**")
+                            if df_carga_jira is None or df_carga_jira.empty:
+                                st.info("Sem itens dos devs lidos do Jira agora.")
+                            else:
+                                col_f1, col_f2 = st.columns([2, 3])
+                                dev_escolhido = col_f1.selectbox("Dev:", ["Todos os devs"] + ordem_devs, key="sel_dev_itens")
+                                sit_escolhida = col_f2.radio(
+                                    "Mostrar:", ["Falta fazer", "Já feito", "Todos"], horizontal=True, key="radio_dev_itens_sit"
+                                )
+                                df_itens_dev = df_carga_jira.copy()
+                                df_itens_dev['Situação'] = df_itens_dev['Situação'].map({'Pendente': 'Falta fazer', 'Finalizado': 'Já feito'})
+                                if dev_escolhido != "Todos os devs":
+                                    df_itens_dev = df_itens_dev[df_itens_dev['responsavel'] == dev_escolhido]
+                                if sit_escolhida != "Todos":
+                                    df_itens_dev = df_itens_dev[df_itens_dev['Situação'] == sit_escolhida]
+                                df_itens_dev['ordem_dev'] = df_itens_dev['responsavel'].apply(
+                                    lambda r: ordem_devs.index(r) if r in ordem_devs else len(ordem_devs)
+                                )
+                                df_itens_dev = df_itens_dev.sort_values(by=['ordem_dev', 'Situação', 'status', 'issue_key'])
+                                df_itens_dev['link'] = st.secrets["JIRA_URL"] + "/browse/" + df_itens_dev['issue_key']
+                                st.caption(f"{len(df_itens_dev)} itens · {df_itens_dev['pontos'].sum():.1f} pts")
+                                st.dataframe(
+                                    df_itens_dev[['link', 'resumo', 'responsavel', 'Situação', 'status', 'tipo_item', 'pontos_txt']],
+                                    hide_index=True,
+                                    use_container_width=True,
+                                    column_config={
+                                        "link": st.column_config.LinkColumn("Chave", display_text=r"/browse/(.*)$"),
+                                        "resumo": "Resumo",
+                                        "responsavel": "Dev",
+                                        "status": "Status",
+                                        "tipo_item": "Tipo",
+                                        "pontos_txt": "Pontos",
+                                    }
+                                )
+
+                            st.markdown("**Resumo da sprint selecionada (banco)**")
                             df_resumo_devs = devs_agrupado_pend.merge(
                                 devs_agrupado_fin, on='Responsável', how='outer', suffixes=('_pend', '_fin')
                             ).fillna(0)
