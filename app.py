@@ -1041,64 +1041,72 @@ with aba_dashboard:
                                     .join(pend_por_dev[['Itens', 'Pontos']]).fillna(0)
                                     .sort_values(by=['Itens', 'Pontos'], ascending=False).index.tolist()
                                 )
-                                altura_grafico = max(250, len(ordem_devs) * 40)
+                                altura_grafico = max(280, len(ordem_devs) * 48)
 
                                 def _grafico_planejamento(coluna, titulo_eixo, cor_pend, cor_fin, casas):
-                                    """Barra por dev: pendente (à esquerda) + finalizado em seguida, com o total na ponta."""
+                                    """Barra por dev: 'falta fazer' em cor forte à esquerda, 'já feito' discreto em seguida,
+                                    com o percentual concluído na ponta. O olho vai direto no que ainda pesa."""
                                     larg = plan_devs.pivot_table(index='Responsável', columns='Situação', values=coluna, aggfunc='sum', fill_value=0)
                                     for sit in ('Pendente', 'Finalizado'):
                                         if sit not in larg.columns:
                                             larg[sit] = 0.0
                                     larg = larg.reset_index()
                                     # Posições calculadas na mão: o empilhamento automático não alinha os rótulos com as barras.
-                                    seg_pend = pd.DataFrame({'Responsável': larg['Responsável'], 'Situação': 'Pendente', 'Valor': larg['Pendente'],
+                                    seg_pend = pd.DataFrame({'Responsável': larg['Responsável'], 'Situação': 'Falta fazer', 'Valor': larg['Pendente'],
                                                              'Inicio': 0.0, 'Fim': larg['Pendente']})
-                                    seg_fin = pd.DataFrame({'Responsável': larg['Responsável'], 'Situação': 'Finalizado', 'Valor': larg['Finalizado'],
+                                    seg_fin = pd.DataFrame({'Responsável': larg['Responsável'], 'Situação': 'Já feito', 'Valor': larg['Finalizado'],
                                                             'Inicio': larg['Pendente'], 'Fim': larg['Pendente'] + larg['Finalizado']})
                                     segs = pd.concat([seg_pend, seg_fin], ignore_index=True)
                                     segs['Centro'] = (segs['Inicio'] + segs['Fim']) / 2
-                                    segs['Rotulo'] = segs['Valor'].apply(lambda v: f"{v:.{casas}f}" if v > 0 else "")
-                                    totais = pd.DataFrame({'Responsável': larg['Responsável'], 'Total': larg['Pendente'] + larg['Finalizado']})
-                                    totais['Rotulo'] = totais['Total'].apply(lambda v: f"Total {v:.{casas}f}")
-                                    # Folga no eixo pra o rótulo do total da maior barra não sair do gráfico.
-                                    escala = alt.Scale(domain=[0, max(float(totais['Total'].max()), 1.0) * 1.3])
-                                    eixo_y = alt.Y('Responsável:N', sort=ordem_devs, title='')
-                                    barras = alt.Chart(segs[segs['Valor'] > 0]).mark_bar(cornerRadius=2).encode(
+                                    totais = pd.DataFrame({'Responsável': larg['Responsável'], 'Total': larg['Pendente'] + larg['Finalizado'],
+                                                           'Feito': larg['Finalizado']})
+                                    totais['Rotulo'] = [f"{(f / t * 100) if t > 0 else 0:.0f}% feito" for f, t in zip(totais['Feito'], totais['Total'])]
+                                    maximo = max(float(totais['Total'].max()), 1.0)
+                                    # Segmento estreito demais não comporta número: fica só no tooltip.
+                                    segs['Rotulo'] = [f"{v:.{casas}f}" if v >= maximo * 0.05 else "" for v in segs['Valor']]
+                                    # Folga no eixo pra o rótulo da ponta da maior barra não sair do gráfico.
+                                    escala = alt.Scale(domain=[0, maximo * 1.28])
+                                    eixo_y = alt.Y('Responsável:N', sort=ordem_devs, title='', axis=alt.Axis(labelFontSize=13, labelLimit=200))
+                                    dados_seg = segs[segs['Valor'] > 0]
+                                    barras = alt.Chart(dados_seg).mark_bar(cornerRadius=3, size=26).encode(
                                         x=alt.X('Inicio:Q', title=titulo_eixo, axis=alt.Axis(grid=False), scale=escala),
                                         x2='Fim:Q',
                                         y=eixo_y,
-                                        color=alt.Color('Situação:N', scale=alt.Scale(domain=['Pendente', 'Finalizado'], range=[cor_pend, cor_fin]),
-                                                        legend=alt.Legend(title='', orient='bottom')),
+                                        color=alt.Color('Situação:N', scale=alt.Scale(domain=['Falta fazer', 'Já feito'], range=[cor_pend, cor_fin]),
+                                                        legend=alt.Legend(title='', orient='bottom', labelFontSize=12)),
                                         tooltip=['Responsável', 'Situação', alt.Tooltip('Valor:Q', title=titulo_eixo, format=f'.{casas}f')]
                                     )
-                                    rotulo_seg = alt.Chart(segs[segs['Valor'] > 0]).mark_text(color='white', fontSize=11, fontWeight='bold').encode(
-                                        x=alt.X('Centro:Q', scale=escala), y=eixo_y, text='Rotulo:N'
-                                    )
-                                    rotulo_total = alt.Chart(totais).mark_text(align='left', baseline='middle', dx=5, color='#9AA5B1', fontSize=11).encode(
+                                    rotulo_pend = alt.Chart(dados_seg[dados_seg['Situação'] == 'Falta fazer']).mark_text(
+                                        color='white', fontSize=15, fontWeight='bold'
+                                    ).encode(x=alt.X('Centro:Q', scale=escala), y=eixo_y, text='Rotulo:N')
+                                    rotulo_fin = alt.Chart(dados_seg[dados_seg['Situação'] == 'Já feito']).mark_text(
+                                        color='#C5CED8', fontSize=12
+                                    ).encode(x=alt.X('Centro:Q', scale=escala), y=eixo_y, text='Rotulo:N')
+                                    rotulo_pct = alt.Chart(totais).mark_text(align='left', baseline='middle', dx=6, color='#9AA5B1', fontSize=12).encode(
                                         x=alt.X('Total:Q', scale=escala), y=eixo_y, text='Rotulo:N'
                                     )
-                                    return (barras + rotulo_seg + rotulo_total).properties(height=altura_grafico)
+                                    return (barras + rotulo_pend + rotulo_fin + rotulo_pct).properties(height=altura_grafico)
 
                                 col_graf1, col_graf2 = st.columns(2)
                                 with col_graf1:
-                                    st.markdown("###### Itens por Dev: pendente x finalizado")
+                                    st.markdown("###### Itens por Dev: o que falta fazer")
                                     st.altair_chart(
-                                        _grafico_planejamento('Itens', 'Itens', '#4CA6FF', '#2F6B9E', 0),
+                                        _grafico_planejamento('Itens', 'Itens', '#2F9BFF', '#3B4A5C', 0),
                                         use_container_width=True, theme="streamlit"
                                     )
                                 with col_graf2:
-                                    st.markdown("###### Pontos por Dev: pendente x finalizado")
+                                    st.markdown("###### Pontos por Dev: o que falta fazer")
                                     st.altair_chart(
-                                        _grafico_planejamento('Pontos', 'Pontos', '#FF9F43', '#9C6A35', 1),
+                                        _grafico_planejamento('Pontos', 'Pontos', '#FF8A1F', '#5A4632', 1),
                                         use_container_width=True, theme="streamlit"
                                     )
 
                                 link_jira = f'{st.secrets["JIRA_URL"]}/issues/?jql={quote(jql_carga)}'
                                 st.caption(
                                     "Lido direto do Jira (sprints abertas, sem 7.0 Dispensado, Bug e Ajuste), sem depender da sprint "
-                                    "escolhida ao lado; atualiza a cada 5 min. **Pendente** = dev ainda não terminou; **Finalizado** = "
+                                    "escolhida ao lado; atualiza a cada 5 min. **Falta fazer** = dev ainda não terminou; **Já feito** = "
                                     "do 3.3 Revisão de Código em diante, incluindo 6.0 Concluído. Item sem estimativa (?) conta 0 ponto. "
-                                    f"Pendente + finalizado fora do 6.0 = o filtro da org: [abrir no Jira]({link_jira})"
+                                    f"Falta fazer + já feito (sem o 6.0) = o filtro da org: [abrir no Jira]({link_jira})"
                                 )
 
                         st.markdown("<br>", unsafe_allow_html=True)
