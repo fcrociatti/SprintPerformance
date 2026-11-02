@@ -1063,12 +1063,15 @@ with aba_dashboard:
                                     segs['Centro'] = (segs['Inicio'] + segs['Fim']) / 2
                                     totais = pd.DataFrame({'Responsável': larg['Responsável'], 'Total': larg['Pendente'] + larg['Finalizado'],
                                                            'Feito': larg['Finalizado']})
-                                    totais['Rotulo'] = [f"{(f / t * 100) if t > 0 else 0:.0f}% feito" for f, t in zip(totais['Feito'], totais['Total'])]
+                                    totais['Rotulo'] = [
+                                        f"{(f / t * 100) if t > 0 else 0:.0f}% concluído · {t:.{casas}f} no total"
+                                        for f, t in zip(totais['Feito'], totais['Total'])
+                                    ]
                                     maximo = max(float(totais['Total'].max()), 1.0)
                                     # Segmento estreito demais não comporta número: fica só no tooltip.
                                     segs['Rotulo'] = [f"{v:.{casas}f}" if v >= maximo * 0.05 else "" for v in segs['Valor']]
                                     # Folga no eixo pra o rótulo da ponta da maior barra não sair do gráfico.
-                                    escala = alt.Scale(domain=[0, maximo * 1.28])
+                                    escala = alt.Scale(domain=[0, maximo * 1.55])
                                     eixo_y = alt.Y('Responsável:N', sort=ordem_devs, title='', axis=alt.Axis(labelFontSize=13, labelLimit=200))
                                     dados_seg = segs[segs['Valor'] > 0]
                                     barras = alt.Chart(dados_seg).mark_bar(cornerRadius=3, size=26).encode(
@@ -3007,9 +3010,6 @@ with aba_dashboard:
         if usar_fluxo_fila:
             escopo_fluxo = st.radio("Escopo:", ["Sprint Atual", "Sprint Atual + Backlog 2"],
                                     horizontal=True, key="radio_escopo_fluxo")
-            st.caption("**Qtd atual** = itens em cada status na última sincronização. **Média da última sprint** = "
-                       "média de itens em cada status no fim de cada dia útil da sprint anterior. "
-                       "Fora da conta: 6.0 Concluído, 7.0 Dispensado, Bug e Ajuste.")
             agora_fx = pd.Timestamp.now(tz="America/Sao_Paulo").tz_localize(None)
 
             def _base_fluxo(df):
