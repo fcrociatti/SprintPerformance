@@ -191,9 +191,10 @@ def _entregas_da_sprint(sprint, status):
 
 @st.cache_data(ttl=300, show_spinner=False)
 def carregar_erros_abertos():
-    """Erros do cliente Grupo Elfa no projeto STAR (única consulta que olha a STAR), sem os que aguardam
-    homologação ou o usuário."""
-    jql = (f'project = STAR AND issuetype = Erro AND cf[10133] = "{CLIENTE_ELFA_NA_STAR}" AND statusCategory != Done '
+    """Erros do cliente Grupo Elfa na sprint de desenvolvimento ativa da STAR (única consulta que olha a STAR),
+    sem os que aguardam homologação ou o usuário. openSprints() não inclui o Backlog 2, que é sprint futura."""
+    jql = (f'project = STAR AND issuetype = Erro AND cf[10133] = "{CLIENTE_ELFA_NA_STAR}" '
+           f'AND Sprint in (openSprints()) AND statusCategory != Done '
            f'AND status not in ("{STATUS_HOMOLOGACAO}", "{STATUS_PENDENCIA_USUARIO}")')
     issues = _buscar_issues(jql, "summary,status,issuetype,assignee")
     return pd.DataFrame([_linha(i) for i in issues], columns=["issue_key", "resumo", "status", "tipo_item", "responsavel"])
