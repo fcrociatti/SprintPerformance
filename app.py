@@ -6,6 +6,7 @@ from requests.auth import HTTPBasicAuth
 from datetime import timedelta, datetime
 from somaCopia import executar_extracao
 from somaCopia import limpar_snapshot_sprint 
+from aba_elfa import renderizar_aba_elfa
 import os
 import re
 import math
@@ -185,7 +186,7 @@ if not df_sprints.empty:
     df_sprints['nome_exibicao'] = df_sprints['descricao'] + " - " + df_sprints['nome_sprint']
 
 
-aba_dashboard,  aba_sincronizacao, aba_historico = st.tabs([" Visão da Sprint",  " Gerenciar Sprints", " Histórico & Desempenho"])
+aba_dashboard,  aba_sincronizacao, aba_historico, aba_projeto_elfa = st.tabs([" Visão da Sprint",  " Gerenciar Sprints", " Histórico & Desempenho", " Projeto ELFA"])
 
 # ==========================================
 # ABA 2: HISTÓRICO E DESEMPENHO 
@@ -3474,3 +3475,10 @@ with aba_dashboard:
 
     else:
         st.warning("Vá à aba 'Gerenciar Sprints' e adicione a sua primeira Sprint!")
+
+
+# ==========================================
+# ABA 4: PROJETO ELFA (aba_elfa.py, lida direto do Jira)
+# ==========================================
+with aba_projeto_elfa:
+    renderizar_aba_elfa()
