@@ -19,6 +19,7 @@ STATUS_HOMOLOGACAO = "5.3 Pendência de Homolog"
 STATUS_PRODUCAO = "6.0 Concluído"
 STATUS_DISPENSADO = "7.0 Dispensado"
 STATUS_COM_ELFA = "1.5 TRIAGEM EM REVISÃO (ELFA)"
+STATUS_PENDENCIA_USUARIO = "5.0 Pendência do Usuário"
 TIPO_RETORNO = "Retorno Negativo (RN)"
 BASE_JQL = "project = ELFA AND issuetype not in subTaskIssueTypes()"
 QTD_SPRINTS_EVOLUCAO = 4
@@ -190,13 +191,12 @@ def _entregas_da_sprint(sprint, status):
 
 @st.cache_data(ttl=300, show_spinner=False)
 def carregar_erros_abertos():
-    """Erros em aberto do projeto ELFA e do cliente Grupo Elfa no projeto STAR (única consulta que olha a STAR).
-    DOCUMENTO HOMOLOGAÇÃO é registro do documento, não erro."""
-    jql = (f'issuetype = Erro AND statusCategory != Done AND '
-           f'(project = ELFA OR (project = STAR AND cf[10133] = "{CLIENTE_ELFA_NA_STAR}"))')
-    linhas = [{**_linha(i), "projeto": i["key"].split("-")[0]} for i in _buscar_issues(jql, "summary,status,issuetype,assignee")]
-    df = pd.DataFrame(linhas, columns=["issue_key", "projeto", "resumo", "status", "tipo_item", "responsavel"])
-    return df[~df["resumo"].str.strip().str.upper().str.startswith("DOCUMENTO")]
+    """Erros do cliente Grupo Elfa no projeto STAR (única consulta que olha a STAR), sem os que aguardam
+    homologação ou o usuário."""
+    jql = (f'project = STAR AND issuetype = Erro AND cf[10133] = "{CLIENTE_ELFA_NA_STAR}" AND statusCategory != Done '
+           f'AND status not in ("{STATUS_HOMOLOGACAO}", "{STATUS_PENDENCIA_USUARIO}")')
+    issues = _buscar_issues(jql, "summary,status,issuetype,assignee")
+    return pd.DataFrame([_linha(i) for i in issues], columns=["issue_key", "resumo", "status", "tipo_item", "responsavel"])
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -214,7 +214,6 @@ def _tabela_itens(df, colunas):
     st.dataframe(tabela[["issue_key", *colunas, "link"]], hide_index=True, use_container_width=True,
                  column_config={"issue_key": "Chave", "resumo": "Resumo", "status": "Status", "tipo_item": "Tipo",
                                 "responsavel": "Responsável", "sprint_anterior": "Sprint anterior",
-                                "projeto": "Projeto",
                                 "link": st.column_config.LinkColumn("Jira")})
 
 
@@ -336,14 +335,11 @@ def _conteudo():
 
     with st.container(border=True):
         st.markdown("#### Erros em Aberto")
-        a, b, c = st.columns(3)
-        a.metric("Total de erros", len(erros))
-        b.metric("Projeto ELFA", int((erros["projeto"] == "ELFA").sum()))
-        c.metric("Projeto STAR", int((erros["projeto"] == "STAR").sum()))
+        st.metric("Total de erros", len(erros))
         por_status = erros.groupby("status").size().reset_index(name="Itens").sort_values("status")
         _barras(por_status, "status", "Itens", alt.value(COR_RETORNO))
         with st.expander(" Itens de erro em aberto", expanded=True):
-            _tabela_itens(erros.sort_values(["projeto", "status"]), ["projeto", "resumo", "status", "responsavel"])
+            _tabela_itens(erros.sort_values("status"), ["resumo", "status", "responsavel"])
 
     anteriores = sprints[indice + 1:indice + 1 + QTD_SPRINTS_EVOLUCAO]
     if anteriores:
