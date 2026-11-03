@@ -27,7 +27,7 @@ CLIENTE_ELFA_NA_STAR = "Grupo Elfa (TLS)"  # campo Cliente (customfield_10133) d
 
 # Entregas informadas pela gestão, valem no lugar da data do Jira: {sprint: {status: [itens]}}.
 # ELFA-970 (inventário cíclico) passou para 5.3 só em 02/11, feriado, mas conta na Sprint Elfa 65.
-ENTREGAS_MANUAIS = {1290: {STATUS_HOMOLOGACAO: ["ELFA-970"], STATUS_PRODUCAO: ["ELFA-970"]}}
+ENTREGAS_MANUAIS = {1290: {STATUS_HOMOLOGACAO: ["ELFA-970"]}}
 
 COR_HOMOLOGACAO, COR_PRODUCAO, COR_RETORNO = "#4CA6FF", "#2ECC71", "#E74C3C"
 
