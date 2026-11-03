@@ -22,6 +22,11 @@ STATUS_COM_ELFA = "1.5 TRIAGEM EM REVISÃO (ELFA)"
 TIPO_RETORNO = "Retorno Negativo (RN)"
 BASE_JQL = "project = ELFA AND issuetype not in subTaskIssueTypes()"
 QTD_SPRINTS_EVOLUCAO = 4
+CLIENTE_ELFA_NA_STAR = "Grupo Elfa (TLS)"  # campo Cliente (customfield_10133) dos itens no projeto STAR
+
+# Entregas informadas pela gestão, valem no lugar da data do Jira: {sprint: {status: [itens]}}.
+# ELFA-970 (inventário cíclico) passou para 5.3 só em 02/11, feriado, mas conta na Sprint Elfa 65.
+ENTREGAS_MANUAIS = {1290: {STATUS_HOMOLOGACAO: ["ELFA-970"], STATUS_PRODUCAO: ["ELFA-970"]}}
 
 COR_HOMOLOGACAO, COR_PRODUCAO, COR_RETORNO = "#4CA6FF", "#2ECC71", "#E74C3C"
 
@@ -168,6 +173,33 @@ def carregar_entregas(status, ini, fim):
 
 
 @st.cache_data(ttl=300, show_spinner=False)
+def carregar_por_chave(chaves):
+    issues = _buscar_issues(f"key in ({', '.join(chaves)})", "summary,status,issuetype,assignee")
+    return pd.DataFrame([_linha(i) for i in issues], columns=["issue_key", "resumo", "status", "tipo_item", "responsavel"])
+
+
+def _entregas_da_sprint(sprint, status):
+    """Entradas no status registradas no Jira, com os acertos de ENTREGAS_MANUAIS (cada item conta numa sprint só)."""
+    df = carregar_entregas(status, sprint["ini"], sprint["fim"])
+    de_outras = {k for id_sprint, por_status in ENTREGAS_MANUAIS.items() if id_sprint != sprint["id"]
+                 for k in por_status.get(status, [])}
+    df = df[~df["issue_key"].isin(de_outras)]
+    faltando = [k for k in ENTREGAS_MANUAIS.get(sprint["id"], {}).get(status, []) if k not in set(df["issue_key"])]
+    return pd.concat([df, carregar_por_chave(tuple(faltando))], ignore_index=True) if faltando else df
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def carregar_erros_abertos():
+    """Erros em aberto do projeto ELFA e do cliente Grupo Elfa no projeto STAR (única consulta que olha a STAR).
+    DOCUMENTO HOMOLOGAÇÃO é registro do documento, não erro."""
+    jql = (f'issuetype = Erro AND statusCategory != Done AND '
+           f'(project = ELFA OR (project = STAR AND cf[10133] = "{CLIENTE_ELFA_NA_STAR}"))')
+    linhas = [{**_linha(i), "projeto": i["key"].split("-")[0]} for i in _buscar_issues(jql, "summary,status,issuetype,assignee")]
+    df = pd.DataFrame(linhas, columns=["issue_key", "projeto", "resumo", "status", "tipo_item", "responsavel"])
+    return df[~df["resumo"].str.strip().str.upper().str.startswith("DOCUMENTO")]
+
+
+@st.cache_data(ttl=300, show_spinner=False)
 def contar_retornos(ini, fim):
     jql = f'project = ELFA AND issuetype = "{TIPO_RETORNO}" AND created >= "{ini} 00:00" AND created <= "{fim} 23:59"'
     return len(_buscar_issues(jql, "issuetype"))
@@ -182,6 +214,7 @@ def _tabela_itens(df, colunas):
     st.dataframe(tabela[["issue_key", *colunas, "link"]], hide_index=True, use_container_width=True,
                  column_config={"issue_key": "Chave", "resumo": "Resumo", "status": "Status", "tipo_item": "Tipo",
                                 "responsavel": "Responsável", "sprint_anterior": "Sprint anterior",
+                                "projeto": "Projeto",
                                 "link": st.column_config.LinkColumn("Jira")})
 
 
@@ -204,9 +237,9 @@ def _grafico_evolucao(anteriores):
     for s in anteriores[::-1]:
         linhas += [
             {"Sprint": s["nome"].replace("Sprint ", ""), "Indicador": "Para homologação",
-             "Itens": len(carregar_entregas(STATUS_HOMOLOGACAO, s["ini"], s["fim"]))},
+             "Itens": len(_entregas_da_sprint(s, STATUS_HOMOLOGACAO))},
             {"Sprint": s["nome"].replace("Sprint ", ""), "Indicador": "Para produção",
-             "Itens": len(carregar_entregas(STATUS_PRODUCAO, s["ini"], s["fim"]))},
+             "Itens": len(_entregas_da_sprint(s, STATUS_PRODUCAO))},
             {"Sprint": s["nome"].replace("Sprint ", ""), "Indicador": "Retornos (RN) abertos",
              "Itens": contar_retornos(s["ini"], s["fim"])},
         ]
@@ -238,8 +271,9 @@ def _conteudo():
 
     itens = carregar_itens_sprint(sprint["id"], sprint["ini"], sprint["fim"], sprint["estado"] != "active")
     backlog = carregar_backlog_elfa()
-    homologacao = carregar_entregas(STATUS_HOMOLOGACAO, sprint["ini"], sprint["fim"])
-    producao = carregar_entregas(STATUS_PRODUCAO, sprint["ini"], sprint["fim"])
+    homologacao = _entregas_da_sprint(sprint, STATUS_HOMOLOGACAO)
+    producao = _entregas_da_sprint(sprint, STATUS_PRODUCAO)
+    erros = carregar_erros_abertos()
 
     with st.container(border=True):
         st.markdown("#### Marcadores Principais")
@@ -297,6 +331,19 @@ def _conteudo():
             _tabela_itens(homologacao, ["resumo", "status", "tipo_item", "responsavel"])
             st.markdown("**Entregues para produção**")
             _tabela_itens(producao, ["resumo", "status", "tipo_item", "responsavel"])
+
+    st.divider()
+
+    with st.container(border=True):
+        st.markdown("#### Erros em Aberto")
+        a, b, c = st.columns(3)
+        a.metric("Total de erros", len(erros))
+        b.metric("Projeto ELFA", int((erros["projeto"] == "ELFA").sum()))
+        c.metric("Projeto STAR", int((erros["projeto"] == "STAR").sum()))
+        por_status = erros.groupby("status").size().reset_index(name="Itens").sort_values("status")
+        _barras(por_status, "status", "Itens", alt.value(COR_RETORNO))
+        with st.expander(" Itens de erro em aberto", expanded=True):
+            _tabela_itens(erros.sort_values(["projeto", "status"]), ["projeto", "resumo", "status", "responsavel"])
 
     anteriores = sprints[indice + 1:indice + 1 + QTD_SPRINTS_EVOLUCAO]
     if anteriores:
